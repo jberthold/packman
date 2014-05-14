@@ -1,0 +1,14 @@
+#include "Cmm.h"
+
+// Serial_pack :: Any -> Int#
+Serial_pack(P_ a)
+{
+    P_ closure;
+    closure = UNTAG(a);
+
+    CInt res;
+    (res) = ccall pack(closure "ptr");
+
+    return(res);
+}
+
