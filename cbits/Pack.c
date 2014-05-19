@@ -11,23 +11,103 @@
    However, the best documentation is includes/Closure*h and rts/sm/Scav.c
 */
 
-// this file is always active, to support serialisation in the
-// sequential and threaded runtime system
-// #if defined(PACKING) /* whole file */
-
-#include "Rts.h"
-//#include "RtsUtils.h"
-//#include "Hash.h"
-//#include "Threads.h" // updateThunk
-//#include "Messages.h" // messageBlackHole
-
-# if defined(DEBUG)
-# include "sm/Sanity.h"
-# endif
-
-//#include "Printer.h" // printing closure info (also non-debug-enabled)
-
+#include <Rts.h>
 #include <string.h>
+
+#include "Types.h"
+#include "Hash.h"
+#include "Errors.h"
+#include "Utils.h"
+ 
+
+ 
+#define messageBlackHole(c,s)  0
+#define DEBUG_HEADROOM  2
+#define IF_PAR_DEBUG(c,s)  
+
+
+/* -----------------------------------------------------------------------------
+   Closure types
+   
+   NOTE: must be kept in sync with the closure types in includes/ClosureTypes.h
+   -------------------------------------------------------------------------- */
+
+char *closure_type_names2[] = {
+    [INVALID_OBJECT]        = "INVALID_OBJECT",
+    [CONSTR]                = "CONSTR",
+    [CONSTR_1_0]            = "CONSTR_1_0",
+    [CONSTR_0_1]            = "CONSTR_0_1",
+    [CONSTR_2_0]            = "CONSTR_2_0",
+    [CONSTR_1_1]            = "CONSTR_1_1",
+    [CONSTR_0_2]            = "CONSTR_0_2",
+    [CONSTR_STATIC]         = "CONSTR_STATIC",
+    [CONSTR_NOCAF_STATIC]   = "CONSTR_NOCAF_STATIC",
+    [FUN]                   = "FUN",
+    [FUN_1_0]               = "FUN_1_0",
+    [FUN_0_1]               = "FUN_0_1",
+    [FUN_2_0]               = "FUN_2_0",
+    [FUN_1_1]               = "FUN_1_1",
+    [FUN_0_2]               = "FUN_0_2",
+    [FUN_STATIC]            = "FUN_STATIC",
+    [THUNK]                 = "THUNK",
+    [THUNK_1_0]             = "THUNK_1_0",
+    [THUNK_0_1]             = "THUNK_0_1",
+    [THUNK_2_0]             = "THUNK_2_0",
+    [THUNK_1_1]             = "THUNK_1_1",
+    [THUNK_0_2]             = "THUNK_0_2",
+    [THUNK_STATIC]          = "THUNK_STATIC",
+    [THUNK_SELECTOR]        = "THUNK_SELECTOR",
+    [BCO]                   = "BCO",
+    [AP]                    = "AP",
+    [PAP]                   = "PAP",
+    [AP_STACK]              = "AP_STACK",
+    [IND]                   = "IND",
+    [IND_PERM]              = "IND_PERM",
+    [IND_STATIC]            = "IND_STATIC",
+    [RET_BCO]               = "RET_BCO",
+    [RET_SMALL]             = "RET_SMALL",
+    [RET_BIG]               = "RET_BIG",
+    [RET_FUN]               = "RET_FUN",
+    [UPDATE_FRAME]          = "UPDATE_FRAME",
+    [CATCH_FRAME]           = "CATCH_FRAME",
+    [UNDERFLOW_FRAME]       = "UNDERFLOW_FRAME",
+    [STOP_FRAME]            = "STOP_FRAME",
+    [BLOCKING_QUEUE]        = "BLOCKING_QUEUE",
+    [BLACKHOLE]             = "BLACKHOLE",
+    [MVAR_CLEAN]            = "MVAR_CLEAN",
+    [MVAR_DIRTY]            = "MVAR_DIRTY",
+    [TVAR]                  = "TVAR",
+    [ARR_WORDS]             = "ARR_WORDS",
+    [MUT_ARR_PTRS_CLEAN]    = "MUT_ARR_PTRS_CLEAN",
+    [MUT_ARR_PTRS_DIRTY]    = "MUT_ARR_PTRS_DIRTY",
+    [MUT_ARR_PTRS_FROZEN0]  = "MUT_ARR_PTRS_FROZEN0",
+    [MUT_ARR_PTRS_FROZEN]   = "MUT_ARR_PTRS_FROZEN",
+    [MUT_VAR_CLEAN]         = "MUT_VAR_CLEAN",
+    [MUT_VAR_DIRTY]         = "MUT_VAR_DIRTY",
+    [WEAK]                  = "WEAK",
+    [PRIM]	                 = "PRIM",
+    [MUT_PRIM]              = "MUT_PRIM",
+    [TSO]                   = "TSO",
+    [STACK]                 = "STACK",
+    [TREC_CHUNK]            = "TREC_CHUNK",
+    [ATOMICALLY_FRAME]      = "ATOMICALLY_FRAME",
+    [CATCH_RETRY_FRAME]     = "CATCH_RETRY_FRAME",
+    [CATCH_STM_FRAME]       = "CATCH_STM_FRAME",
+    [WHITEHOLE]             = "WHITEHOLE"
+};
+
+char *
+info_type2(StgClosure *closure){ 
+    return closure_type_names2[get_itbl(closure)->type];
+}
+
+char *
+info_type_by_ip2(StgInfoTable *ip){ 
+    return closure_type_names2[ip->type];
+}
+
+#define info_type  info_type2
+#define info_type_by_ip  info_type_by_ip2
 
 /* later:
 #include "RTTables.h" // packet split operates on inports,
@@ -35,8 +115,15 @@
 */
 
 
+/* nat messageBlackHole(Capability *cap, MessageBlackHole *msg) { */
+    /* return 0; */
+/* } */
+
+
 // for better reading only... ATTENTION: given in bytes!
-#define RTS_PACK_BUFFER_SIZE   RtsFlags.ParFlags.packBufferSize
+/* #define RTS_PACK_BUFFER_SIZE   RtsFlags.ParFlags.packBufferSize */
+#define RTS_PACK_BUFFER_SIZE   10485760   // 10 MiB
+
 
 // size of the (fixed) Closure header in words
 #define HEADERSIZE sizeof(StgHeader)/sizeof(StgWord)
@@ -121,7 +208,7 @@ STATIC_INLINE rtsBool RoomToPack (nat size);
 // Packing and helpers
 
 // external interface, declared in Parallel.h: 
-// rtsPackBuffer* PackNearbyGraph(StgClosure* closure, StgTSO* tso);
+// pmPackBuffer* PackNearbyGraph(StgClosure* closure, StgTSO* tso);
 
 // packing routine, branches into special cases
 static StgWord PackClosure (StgClosure *closure);
@@ -167,11 +254,11 @@ static UnpackInfo* saveUnpackState(StgClosure* graphroot, StgClosure* parent,
 
 // external interface, declared in Parallel.h:
 /*
-StgClosure        *UnpackGraph(rtsPackBuffer *packBuffer,
+StgClosure        *UnpackGraph(pmPackBuffer *packBuffer,
 			       Port inPort,
 			       Capability* cap);
 */
-// internal function working on the raw data (instead of rtsPackBuffer)
+// internal function working on the raw data (instead of pmPackBuffer)
 StgClosure* UnpackGraph_(StgWord *buffer, StgInt size, Capability* cap);
 
 // unpacks one closure (common prelude + switches to special cases)
@@ -212,7 +299,7 @@ Mutex pack_mutex;
 #endif
 
 /* The pack buffer, space for packing a graph, protected by pack_mutex */
-static rtsPackBuffer *globalPackBuffer = NULL;
+static pmPackBuffer *globalPackBuffer = NULL;
 
 /* packing and unpacking misc: */
 static nat     pack_locn,           /* ptr to first free loc in pack buffer */
@@ -237,7 +324,7 @@ static char fingerPrintStr[MAX_FINGER_PRINT_LEN];
 static void GraphFingerPrint(StgClosure *graphroot);
 static HashTable *tmpClosureTable;  // used in GraphFingerPrint and PrintGraph
 
-void checkPacket(rtsPackBuffer *packBuffer);
+void checkPacket(pmPackBuffer *packBuffer);
 #endif
 
 // functionality:
@@ -249,9 +336,9 @@ void InitPackBuffer(void)
 {
   ASSERT(RTS_PACK_BUFFER_SIZE > 0);
 
-  if (globalPackBuffer==(rtsPackBuffer*)NULL) {
-    if ((globalPackBuffer = (rtsPackBuffer *) 
-	 stgMallocBytes(sizeof(rtsPackBuffer)
+  if (globalPackBuffer==(pmPackBuffer*)NULL) {
+    if ((globalPackBuffer = (pmPackBuffer *) 
+	 pmMallocBytes(sizeof(pmPackBuffer)
 			+ RTS_PACK_BUFFER_SIZE 
 			+ sizeof(StgWord)*DEBUG_HEADROOM,
 			"InitPackBuffer")) == NULL)
@@ -268,14 +355,17 @@ void InitPackBuffer(void)
 
 void freePackBuffer(void) {
   if (globalPackBuffer) // has been allocated (called from ParInit, so always)
-    stgFree(globalPackBuffer);
+    pmFree(globalPackBuffer);
   if (ClosureQueue) // has been allocated
-    stgFree(ClosureQueue); 
+    pmFree(ClosureQueue); 
 }
 
 //@cindex InitPacking
 static void InitPacking(rtsBool unpack)
 {
+    if (globalPackBuffer == NULL) {
+        InitPackBuffer();
+    }
   if (unpack) {
     /* allocate a GA-to-GA map (needed for ACK message) */
     // InitPendingGABuffer(RtsFlags.ParFlags.packBufferSize);
@@ -446,14 +536,14 @@ STATIC_INLINE StgInfoTable*
     break;
 
     /* Small arrays do not have card tables, straightforward. */
-  case SMALL_MUT_ARR_PTRS_CLEAN:
-  case SMALL_MUT_ARR_PTRS_DIRTY:
-  case SMALL_MUT_ARR_PTRS_FROZEN0:
-  case SMALL_MUT_ARR_PTRS_FROZEN:
-    *vhs = 1; // ptrs field
-    *ptrs = ((StgSmallMutArrPtrs*) node)->ptrs;
-    *nonptrs = 0;
-    break;
+  /* case SMALL_MUT_ARR_PTRS_CLEAN: */
+  /* case SMALL_MUT_ARR_PTRS_DIRTY: */
+  /* case SMALL_MUT_ARR_PTRS_FROZEN0: */
+  /* case SMALL_MUT_ARR_PTRS_FROZEN: */
+  /*   *vhs = 1; // ptrs field */
+  /*   *ptrs = ((StgSmallMutArrPtrs*) node)->ptrs; */
+  /*   *nonptrs = 0; */
+  /*   break; */
 
     /* we do not want to see these here (until thread migration) */
   case CATCH_STM_FRAME:
@@ -583,7 +673,7 @@ void InitClosureQueue(void)
 
   if (ClosureQueue==NULL)
     ClosureQueue = (StgClosure**) 
-      stgMallocBytes(RTS_PACK_BUFFER_SIZE, 
+      pmMallocBytes(RTS_PACK_BUFFER_SIZE, 
 		     "InitClosureQueue");
 }
 
@@ -792,7 +882,7 @@ STATIC_INLINE void PackOffset(StgWord offset) {
 
   */
 
-rtsPackBuffer* PackNearbyGraph(StgClosure* closure, StgTSO* tso)
+pmPackBuffer* PackNearbyGraph(StgClosure* closure, StgTSO* tso)
 {
   StgWord errcode = P_SUCCESS; // error code returned by PackClosure
 
@@ -831,7 +921,7 @@ rtsPackBuffer* PackNearbyGraph(StgClosure* closure, StgTSO* tso)
     if ( errcode != P_SUCCESS ) {
       DonePacking();
       globalPackBuffer->tso = NULL;
-      return ( (rtsPackBuffer *) errcode );
+      return ( (pmPackBuffer *) errcode );
     }
   } while (!QueueEmpty());
   
@@ -1140,16 +1230,16 @@ static StgWord PackClosure(StgClosure* closure) {
     barf("Pack: found WHITEHOLE while packing");
 #endif
 
-  case SMALL_MUT_ARR_PTRS_CLEAN:
-  case SMALL_MUT_ARR_PTRS_DIRTY:
-  case SMALL_MUT_ARR_PTRS_FROZEN:
-  case SMALL_MUT_ARR_PTRS_FROZEN0:
+  /* case SMALL_MUT_ARR_PTRS_CLEAN: */
+  /* case SMALL_MUT_ARR_PTRS_DIRTY: */
+  /* case SMALL_MUT_ARR_PTRS_FROZEN: */
+  /* case SMALL_MUT_ARR_PTRS_FROZEN0: */
     /* unlike the standard arrays, small arrays do not have a card table.
      * Layout is thus: +------------------------------+
      *                 | hdr | #ptrs | payload (ptrs) |
      *                 +------------------------------+
      * No problem with using PackGeneric and vhs=1 in get_closure_info. */
-    return PackGeneric(closure);
+    /* return PackGeneric(closure); */
 
   unsupported:
     errorBelch("Pack: packing type %s (%p) not implemented", 
@@ -1582,7 +1672,7 @@ PackArray(StgClosure *closure) {
 */
 
 StgClosure*
-UnpackGraph(rtsPackBuffer *packBuffer, 
+UnpackGraph(pmPackBuffer *packBuffer, 
 	       STG_UNUSED Port inPort, Capability* cap) {
 
   StgClosure *graphroot;
@@ -1928,10 +2018,10 @@ UnpackClosure (StgWord **bufptrP, Capability* cap) {
     case THUNK_1_1:
     case THUNK_0_2:
     case THUNK_SELECTOR:
-    case SMALL_MUT_ARR_PTRS_CLEAN:
-    case SMALL_MUT_ARR_PTRS_DIRTY:
-    case SMALL_MUT_ARR_PTRS_FROZEN0:
-    case SMALL_MUT_ARR_PTRS_FROZEN:
+    /* case SMALL_MUT_ARR_PTRS_CLEAN: */
+    /* case SMALL_MUT_ARR_PTRS_DIRTY: */
+    /* case SMALL_MUT_ARR_PTRS_FROZEN0: */
+    /* case SMALL_MUT_ARR_PTRS_FROZEN: */
 
       IF_PAR_DEBUG(packet,
 		   debugBelch("Allocating %d heap words for %s-closure:\n"
@@ -2271,8 +2361,8 @@ StgClosure* restoreUnpackState(UnpackInfo* unpack,StgClosure** graphroot,
   offsetpadding = unpack->offsetpadding;
 
   // free allocated memory:
-  stgFree(unpack->queue);
-  stgFree(unpack);
+  pmFree(unpack->queue);
+  pmFree(unpack);
 
   IF_PAR_DEBUG(pack,
 	       debugBelch("unpack state restored (graphroot: %p, current "
@@ -2295,7 +2385,7 @@ StgClosure** saveQueue(nat* size) {
   IF_PAR_DEBUG(packet, 
 	       debugBelch("saveQueue: saving ");
 	       PrintClosureQueue());
-  queue = (StgClosure **) stgMallocBytes(*size * sizeof(StgClosure*), 
+  queue = (StgClosure **) pmMallocBytes(*size * sizeof(StgClosure*), 
 					 "saveQueue: Queue");
   memcpy(queue, ClosureQueue+clq_pos, *size * sizeof(StgClosure*));
   IF_PAR_DEBUG(packet,
@@ -2313,7 +2403,7 @@ UnpackInfo* saveUnpackState(StgClosure* graphroot, StgClosure* parent,
   UnpackInfo* save;
   nat size;
 
-  save = stgMallocBytes(sizeof(UnpackInfo),"saveUnpackState: UnpackInfo");
+  save = pmMallocBytes(sizeof(UnpackInfo),"saveUnpackState: UnpackInfo");
   IF_PAR_DEBUG(pack,
 	       debugBelch("saving current unpack state at %p",save);
 	       debugBelch("graphroot: %p, current parent: %p (ptr %d of %d, vhs= %d)",
@@ -2350,8 +2440,9 @@ UnpackInfo* saveUnpackState(StgClosure* graphroot, StgClosure* parent,
 // (unless packing was blocked, in which case we return the error code)
 // This implements primitive serialize# and #trySerialize (if tso==NULL).
 StgClosure* tryPackToMemory(StgClosure* graphroot, 
-			    StgTSO* tso, Capability* cap) {
-  rtsPackBuffer* buffer;
+			    StgTSO* tso, Capability* cap)
+{
+  pmPackBuffer* buffer;
   StgArrWords* wordArray;
 
   ACQUIRE_LOCK(&pack_mutex);
@@ -2758,21 +2849,21 @@ static void GraphFingerPrint_(StgClosure *p) {
   case WHITEHOLE:
     break;
 
-  case SMALL_MUT_ARR_PTRS_CLEAN:
-  case SMALL_MUT_ARR_PTRS_DIRTY:
-  case SMALL_MUT_ARR_PTRS_FROZEN0:
-  case SMALL_MUT_ARR_PTRS_FROZEN:
-    {
-	char str[6];
-	sprintf(str,"%ld",(long)((StgSmallMutArrPtrs*)p)->ptrs);
-	strcat(fingerPrintStr,str); 
-  	nat i;
-  	for (i = 0; i < ((StgSmallMutArrPtrs*)p)->ptrs; i++) {
-	  //contains closures... follow
-	  GraphFingerPrint_(((StgSmallMutArrPtrs*)p)->payload[i]);
-  	}
-  	break;
-    }
+  /* case SMALL_MUT_ARR_PTRS_CLEAN: */
+  /* case SMALL_MUT_ARR_PTRS_DIRTY: */
+  /* case SMALL_MUT_ARR_PTRS_FROZEN0: */
+  /* case SMALL_MUT_ARR_PTRS_FROZEN: */
+    /* { */
+	/* char str[6]; */
+	/* sprintf(str,"%ld",(long)((StgSmallMutArrPtrs*)p)->ptrs); */
+	/* strcat(fingerPrintStr,str);  */
+      /* nat i; */
+      /* for (i = 0; i < ((StgSmallMutArrPtrs*)p)->ptrs; i++) { */
+	  /* //contains closures... follow */
+	  /* GraphFingerPrint_(((StgSmallMutArrPtrs*)p)->payload[i]); */
+      /* } */
+      /* break; */
+    /* } */
 
   default:
     barf("GraphFingerPrint_: unknown closure %d",
@@ -2784,7 +2875,7 @@ static void GraphFingerPrint_(StgClosure *p) {
 /*  Doing a sanity check on a packet.
     This does a full iteration over the packet, as in UnpackGraph.
 */
-void checkPacket(rtsPackBuffer *packBuffer) {
+void checkPacket(pmPackBuffer *packBuffer) {
   StgInt packsize, openptrs;
   nat clsize, ptrs, nonptrs, vhs;
   StgWord *bufptr;
@@ -2926,4 +3017,3 @@ void checkPacket(rtsPackBuffer *packBuffer) {
 /* END OF DEBUG */
 #endif 
 
-// #endif /* PACKING */

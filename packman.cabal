@@ -15,9 +15,10 @@ executable test
                      ghc-prim
   ghc-options:       -debug
 
-  c-sources:         cbits/wrapper.cmm
-                     cbits/pack_eden.c
-  includes:          pack.h
+  c-sources:         cbits/Wrapper.cmm
+                     cbits/Pack.c
+                     cbits/Hash.c
+                     cbits/Utils.c
   include-dirs:      cbits
   cc-options:        -g
 

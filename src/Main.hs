@@ -16,10 +16,10 @@ import GHC.Types
 
 data Foo = A | B | C | D
 
-foreign import prim "stg_tryPack" tryPack# :: Any -> Int#
+foreign import prim "stg_tryPack" tryPack# :: Any -> (# Int#, ByteArray# #)
 pack :: a -> Int
-pack obj = let x = tryPack# (unsafeCoerce obj :: Any)
-           in I# x
+pack obj = let (# err, buf #) = tryPack# (unsafeCoerce obj :: Any)
+           in I# err
 
 packAndPrint o = let x = pack o in print x
 

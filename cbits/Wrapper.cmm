@@ -1,0 +1,30 @@
+#include <Cmm.h>
+#include "Errors.h"
+
+
+stg_tryPack (gcptr original)
+{
+    // args: closure (graph root to serialize)
+    gcptr buff;
+    W_ errCode;
+
+    MAYBE_GC_P(stg_tryPack, original);
+
+    // assign something to keep cmm reg.allocator happy
+    buff = ghczmprim_GHCziTypes_False_closure;
+    errCode = P_SUCCESS;
+
+    // call packing function (without giving the TSO, no blocking)
+    ("ptr" buff) = ccall tryPackToMemory(original "ptr", NULL,
+                                         MyCapability() "ptr");
+    // small values indicate failure, see includes/rts/Parallel.h
+    if (buff <= P_ERRCODEMAX) {
+        errCode = buff;
+        buff = ghczmprim_GHCziTypes_False_closure;
+    } else {
+        errCode = P_SUCCESS;
+    }
+
+    return (errCode, buff);
+}
+
