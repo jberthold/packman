@@ -16,9 +16,9 @@ import GHC.Types
 
 data Foo = A | B | C | D
 
-foreign import prim "Serial_pack" pack# :: Any -> Int#
+foreign import prim "stg_tryPack" tryPack# :: Any -> Int#
 pack :: a -> Int
-pack obj = let x = pack# (unsafeCoerce obj :: Any)
+pack obj = let x = tryPack# (unsafeCoerce obj :: Any)
            in I# x
 
 packAndPrint o = let x = pack o in print x

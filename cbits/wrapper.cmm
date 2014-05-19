@@ -1,8 +1,74 @@
-#include "Cmm.h"
+#include <Cmm.h>
 
-// Serial_pack :: Any -> Int#
-Serial_pack(P_ a)
+stg_serializzezh (gcptr original)
 {
+  // args: closure (graph root to serialize)
+  gcptr buff;
+  W_ errCode;
+
+  MAYBE_GC_P(stg_serializzezh, original);
+
+  // assign something to keep cmm reg.allocator happy
+  buff = ghczmprim_GHCziTypes_False_closure;
+  errCode = 0;
+
+  // call packing function (pass TSO, so enabling blocking
+  ("ptr" buff) = ccall tryPackToMemory(original "ptr", CurrentTSO "ptr",
+				       MyCapability() "ptr");
+  // if packing hits a black hole, it will block the TSO
+  // for all error codes by the RTS see includes/rts/Parallel.h
+  if (buff == P_BLACKHOLE) {
+    // Packing code has written block_reason and -closure, and
+    // created/modified a blocking queue by a new message, see packing code.
+    // So just adjust the TSO stack for blocked state and return to the
+    // scheduler.
+
+    // We do not use stg_block_blackhole, since R1 is *not* the
+    // closure TSO is blocked on! Must save R1 (graph
+    // root) for reentering after getting unblocked.
+    
+    // defined in HeapStackCheck.cmm, declared in
+    // StgMiscClosures.h. Save R1 = original
+
+    jump stg_block_serializze(original);
+  }
+
+  // other small values indicate other failures
+  if ( buff <= P_ERRCODEMAX ) {
+    errCode = buff;
+    buff = ghczmprim_GHCziTypes_False_closure;
+  } else {
+    errCode = 0;
+  }
+
+  return (errCode, buff);
+}
+
+stg_tryPack (gcptr original)
+{
+  // args: closure (graph root to serialize)
+  gcptr buff;
+  W_ errCode;
+
+  // XXX: Should this be stg_trySerializzezh?
+  MAYBE_GC_P(stg_serializzezh, original);
+
+  // assign something to keep cmm reg.allocator happy
+  buff = ghczmprim_GHCziTypes_False_closure;
+  errCode = P_SUCCESS;
+
+  // call packing function (without giving the TSO, no blocking)
+  ("ptr" buff) = ccall tryPackToMemory(original "ptr", NULL,
+                                       MyCapability() "ptr");
+  // small values indicate failure, see includes/rts/Parallel.h
+  if ( buff <= P_ERRCODEMAX ) {
+    errCode = buff;
+    buff = ghczmprim_GHCziTypes_False_closure;
+  } else {
+    errCode = P_SUCCESS;
+  }
+
+  return (errCode, buff);
     P_ closure;
     closure = UNTAG(a);
 

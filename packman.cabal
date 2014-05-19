@@ -16,7 +16,7 @@ executable test
   ghc-options:       -debug
 
   c-sources:         cbits/wrapper.cmm
-                     cbits/pack.c
+                     cbits/pack_eden.c
   includes:          pack.h
   include-dirs:      cbits
   cc-options:        -g
