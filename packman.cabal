@@ -6,26 +6,33 @@ author:              Michael Budde, Asbjørn
 maintainer:          mbudde@gmail.com
 build-type:          Simple
 cabal-version:       >= 1.8
+tested-with:         GHC==7.8.2
 extra-source-files:  cbits/pack.c
 
+flag debug
+  description:       Enable debug support
+  default:           False
 
 library
   hs-source-dirs:    src
   exposed-modules:   Data.Serialize.Packman
   build-depends:     base >= 4.5.0,
                      ghc-prim
-  ghc-options:       -debug
+  if flag(debug)
+    ghc-options:     -debug
 
   c-sources:         cbits/Wrapper.cmm
                      cbits/Pack.c
                      cbits/Hash.c
                      cbits/Utils.c
   include-dirs:      cbits
-  cc-options:        -g
+  if flag(debug)
+    cc-options:      -g
 
 executable test
   hs-source-dirs:    test
   main-is:           Main.hs
   build-depends:     base >= 4.5.0,
                      packman
-  ghc-options:       -debug
+  if flag(debug)
+    ghc-options:     -debug
