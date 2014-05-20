@@ -16,7 +16,6 @@ import Unsafe.Coerce
 
 import GHC.Prim
 import GHC.Types
-import Data.Primitive
 
 
 data Serialized a = Serialized ByteArray#

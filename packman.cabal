@@ -13,8 +13,7 @@ library
   hs-source-dirs:    src
   exposed-modules:   Data.Serialize.Packman
   build-depends:     base >= 4.5.0,
-                     ghc-prim,
-                     primitive
+                     ghc-prim
   ghc-options:       -debug
 
   c-sources:         cbits/Wrapper.cmm
