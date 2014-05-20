@@ -28,3 +28,26 @@ stg_tryPack (gcptr original)
     return (errCode, buff);
 }
 
+
+stg_unpack (gcptr buff)
+{
+    // args: R1 ByteArray# containing a serialized subgraph
+    W_ new;
+    W_ errCode;
+
+    // assign something to keep cmm reg.allocator happy
+    new = ghczmprim_GHCziTypes_False_closure;
+    errCode = P_SUCCESS;
+
+    MAYBE_GC_P(stg_unpack, buff);
+
+    // call packing function
+    ("ptr" new) = ccall UnpackGraphWrapper(buff "ptr", MyCapability() "ptr");
+
+    if (new <= P_ERRCODEMAX) {
+        errCode = new;
+        new = ghczmprim_GHCziTypes_False_closure;
+    }
+
+    return (errCode, new);
+}

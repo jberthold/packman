@@ -8,11 +8,13 @@ build-type:          Simple
 cabal-version:       >= 1.8
 extra-source-files:  cbits/pack.c
 
-executable test
+
+library
   hs-source-dirs:    src
-  main-is:           Main.hs
+  exposed-modules:   Data.Serialize.Packman
   build-depends:     base >= 4.5.0,
-                     ghc-prim
+                     ghc-prim,
+                     primitive
   ghc-options:       -debug
 
   c-sources:         cbits/Wrapper.cmm
@@ -22,3 +24,9 @@ executable test
   include-dirs:      cbits
   cc-options:        -g
 
+executable test
+  hs-source-dirs:    test
+  main-is:           Main.hs
+  build-depends:     base >= 4.5.0,
+                     packman
+  ghc-options:       -debug
