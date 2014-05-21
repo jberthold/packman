@@ -1,13 +1,21 @@
 name:                packman
 version:             0.1
-synopsis:            Serialization
+synopsis:            Serialization library for GHC
+category:            Serialization, Data, GHC
 license:             BSD3
-author:              Michael Budde, Asbjørn
+author:              Michael Budde, Ásbjørn V. Jøkladal
 maintainer:          mbudde@gmail.com
 build-type:          Simple
 cabal-version:       >= 1.8
 tested-with:         GHC==7.8.2
-extra-source-files:  cbits/pack.c
+extra-source-files:  cbits/Wrapper.cmm
+                     cbits/Pack.c
+                     cbits/Hash.c
+                     cbits/Hash.h
+                     cbits/Utils.c
+                     cbits/Utils.h
+                     cbits/Errors.h
+                     cbits/Types.h
 
 flag debug
   description:       Enable debug support
@@ -36,3 +44,8 @@ executable test
                      packman
   if flag(debug)
     ghc-options:     -debug
+
+source-repository head
+  type:     git
+  location: git://github.com/mbudde/packman.git
+
