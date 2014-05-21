@@ -22,10 +22,12 @@ flag debug
   default:           False
 
 library
-  hs-source-dirs:    src
-  exposed-modules:   Data.Serialize.Packman
+  exposed-modules:   GHC.Packing
   build-depends:     base >= 4.5.0,
-                     ghc-prim
+                     ghc-prim,
+                     array,
+                     binary,
+                     bytestring
   if flag(debug)
     ghc-options:     -debug
 
