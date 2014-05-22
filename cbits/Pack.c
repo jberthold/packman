@@ -387,7 +387,6 @@ static void InitPacking(rtsBool unpack)
     if (unpack)
         return;
 
-    globalPackBuffer->id = buf_id++;  /* buffer id are only used for debugging! */
     pack_locn = 0;         /* the index into the actual pack buffer */
     unpacked_size = 0;     /* the size of the whole graph when unpacked */
 }
@@ -408,7 +407,6 @@ static void ClearPackBuffer(void)
     offsetpadding += pack_locn; // set to 1 when started (un)packing...
 
     // Buffer remains the same, admin. fields invalidated
-    globalPackBuffer->id = buf_id++;  // buffer id are only used for debugging!
     pack_locn = 0;         // the index into the actual pack buffer
     unpacked_size = 0;     // the size of the whole graph when unpacked
 }
@@ -914,15 +912,11 @@ pmPackBuffer* PackNearbyGraph(StgClosure* closure, StgTSO* tso)
                 (int)(tso?tso->id:0), tso, fingerPrintStr));
 #endif
 
-    // save the packing TSO (to block/enqueue it and for partial sending)
-    globalPackBuffer->tso = tso;
-
     QueueClosure(closure);
     do {
         errcode = PackClosure(DeQueueClosure());
         if (errcode != P_SUCCESS) {
             DonePacking();
-            globalPackBuffer->tso = NULL;
             return ((pmPackBuffer *) errcode);
         }
     } while (!QueueEmpty());
@@ -939,7 +933,6 @@ pmPackBuffer* PackNearbyGraph(StgClosure* closure, StgTSO* tso)
     globalPackBuffer->size = pack_locn;
 
     /* done packing */
-    globalPackBuffer->tso = NULL;
     DonePacking();
 
     IF_PAR_DEBUG(pack,
@@ -1110,7 +1103,6 @@ loop:
         case BLACKHOLE:
             //  case RBH:
             {
-                StgTSO* tso = globalPackBuffer->tso;
                 StgClosure* indirectee = ((StgInd*)closure)->indirectee;
 
                 // some Blackholes are actually indirections since ghc-7.0
@@ -1125,38 +1117,9 @@ loop:
                         // If a TSO called a primOp, it must be blocked on this BH
                         // until the BH gets updated/data arrives. On the awakening of
                         // the BlockingQueue, the PrimOp calls packClosure again.
-                        if (tso != NULL) {
-                            MessageBlackHole *msg = NULL;
-
-                            IF_PAR_DEBUG(packet,
-                                    debugBelch("TSO %d blocking on %s at %p while packing.\n",
-                                        (int)tso->id, info_type_by_ip(info), closure));
-
-                            // everything for blocking the tso is done here: create a message,
-                            // call msgBlackHole, set fields in tso. If msgBlackHole signals we
-                            // can continue (threaded rts case), we jump back.
-
-                            msg = (MessageBlackHole*) allocate(tso->cap,
-                                    sizeofW(MessageBlackHole));
-                            SET_HDR(msg, &stg_MSG_BLACKHOLE_info, CCS_SYSTEM);
-                            msg->tso = tso;
-                            msg->bh  = closure;
-
-                            if (messageBlackHole(tso->cap, msg)) {
-                                tso->why_blocked = BlockedOnBlackHole;
-                                tso->block_info.bh = msg;
-                                // packing failed, TSO blocked
-                            } else {
-                                goto loop; // could not block TSO (race condition), try again
-                            }
-                        } else {
-                            // if tso == NULL, the routine is not supposed to block the TSO,
-                            // (or we are in a GUM system exporting a spark: pack a FetchMe)
-
                             IF_PAR_DEBUG(packet,
                                     debugBelch("packing hit a %s at %p, no TSO given (returning).\n",
                                         info_type_by_ip(info), closure));
-                        }
                         return P_BLACKHOLE;
 
                     default: // an indirection, pack the indirectee (jump back to start)
@@ -2894,8 +2857,8 @@ void checkPacket(pmPackBuffer *packBuffer)
     StgWord *bufptr;
     HashTable *offsets;
 
-    IF_PAR_DEBUG(pack, debugBelch("checking packet %" FMT_Word " (@ %p) ...",
-                packBuffer->id, packBuffer));
+    IF_PAR_DEBUG(pack, debugBelch("checking packet (@ %p) ...",
+                packBuffer));
 
     offsets = allocHashTable(); // used to identify valid offsets
     packsize = 0; // compared against value stored in packet
@@ -2922,8 +2885,8 @@ void checkPacket(pmPackBuffer *packBuffer)
         } else if (tag == OFFSET) {
             bufptr++; // skip marker
             if (!lookupHashTable(offsets, *bufptr)) { //
-                barf("invalid offset %" FMT_Word " in packet %" FMT_Word
-                        " at position %p", *bufptr, packBuffer->id, bufptr);
+                barf("invalid offset %" FMT_Word " in packet "
+                        " at position %p", *bufptr,  bufptr);
             }
             bufptr++; // move forward
             packsize += 2;
@@ -2936,9 +2899,9 @@ void checkPacket(pmPackBuffer *packBuffer)
 
             // check info ptr
             if (!LOOKS_LIKE_INFO_PTR((StgWord) ip)) {
-                barf("Non-closure found in packet %" FMT_Word
+                barf("Non-closure found in packet"
                         " at position %p (value %p)\n",
-                        packBuffer->id, bufptr, ip);
+                         bufptr, ip);
             }
 
             // analogous to unpacking, we pretend the buffer is a heap closure
@@ -2950,17 +2913,17 @@ void checkPacket(pmPackBuffer *packBuffer)
 
             // This is rather a test for get_closure_info...but used here
             if (clsize != (nat) HEADERSIZE + vhs + ptrs + nonptrs) {
-                barf("size mismatch in packed closure at %p (packet %" FMT_Word "):"
-                        "(%d + %d + %d +%d != %d)", bufptr, packBuffer->id,
+                barf("size mismatch in packed closure at %p :"
+                        "(%d + %d + %d +%d != %d)", bufptr,
                         HEADERSIZE, vhs, ptrs, nonptrs, clsize);
             }
 
             // do a plausibility check on the values. Assume we never see
             // large numbers of ptrs and non-ptrs simultaneously
             if (ptrs > 99 && nonptrs > 99) {
-                barf("Found weird infoptr %p in packet %" FMT_Word
+                barf("Found weird infoptr %p in packet "
                         " (position %p): vhs %d, %d ptrs, %d non-ptrs, size %d",
-                        ip, packBuffer->id, bufptr, vhs, ptrs, nonptrs, clsize);
+                        ip, bufptr, vhs, ptrs, nonptrs, clsize);
             }
 
             // Register the pack location as a valid offset. Offsets are
@@ -3010,20 +2973,19 @@ void checkPacket(pmPackBuffer *packBuffer)
                 FMT_Word " open pointers ", packsize, openptrs));
 
     if (openptrs != 0) {
-        barf("%d open pointers at end of packet %" FMT_Word,
-                openptrs, packBuffer->id);
+        barf("%d open pointers at end of packet ",
+                openptrs);
     }
 
     IF_DEBUG(sanity, ASSERT(*(bufptr++) == END_OF_BUFFER_MARKER && packsize++));
 
     if (packsize != packBuffer->size) {
-        barf("surplus data (%" FMT_Word " words) at end of packet %" FMT_Word,
-                packBuffer->size - packsize, packBuffer->id);
+        barf("surplus data (%" FMT_Word " words) at end of packet ",
+                packBuffer->size - packsize);
     }
 
     freeHashTable(offsets, NULL);
-    IF_PAR_DEBUG(pack, debugBelch("packet %" FMT_Word " OK\n",
-                packBuffer->id));
+    IF_PAR_DEBUG(pack, debugBelch("packet OK\n"));
 
 }
 
