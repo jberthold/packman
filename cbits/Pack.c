@@ -15,16 +15,26 @@
 #include <string.h>
 
 #include "Types.h"
-#include "Hash.h"
 #include "Errors.h"
-#include "Utils.h"
 
 #define DEBUG_HEADROOM  2
 #define IF_PAR_DEBUG(c,s)
 
-/* internal functions in the GHC runtime, but very stable */
+/* Internal functions in the GHC runtime, but very stable */
 extern char* info_type(StgClosure*);
 extern char* info_type_by_ip(StgInfoTable*);
+
+/* Internal hash table implementation */
+typedef struct hashtable HashTable;
+extern HashTable * allocHashTable    ( void );
+extern void *      lookupHashTable ( HashTable *table, StgWord key );
+extern void        insertHashTable ( HashTable *table, StgWord key, void *data );
+extern void *      removeHashTable ( HashTable *table, StgWord key, void *data );
+extern void freeHashTable ( HashTable *table, void (*freeDataFun)(void *) );
+
+/* Internal malloc wrapper functions */
+extern void *stgMallocBytes(int n, char *msg) GNUC3_ATTRIBUTE(__malloc__);
+extern void stgFree(void* p);
 
 // for better reading only... ATTENTION: given in bytes!
 /* #define RTS_PACK_BUFFER_SIZE   RtsFlags.ParFlags.packBufferSize */
@@ -244,7 +254,7 @@ void InitPackBuffer(void)
 
     if (globalPackBuffer==(pmPackBuffer*)NULL) {
         if ((globalPackBuffer = (pmPackBuffer *)
-                    pmMallocBytes(sizeof(pmPackBuffer)
+                    stgMallocBytes(sizeof(pmPackBuffer)
                         + RTS_PACK_BUFFER_SIZE
                         + sizeof(StgWord)*DEBUG_HEADROOM,
                         "InitPackBuffer")) == NULL) {
@@ -264,9 +274,9 @@ void InitPackBuffer(void)
 void freePackBuffer(void)
 {
     if (globalPackBuffer) // has been allocated (called from ParInit, so always)
-        pmFree(globalPackBuffer);
+        stgFree(globalPackBuffer);
     if (ClosureQueue) // has been allocated
-        pmFree(ClosureQueue);
+        stgFree(ClosureQueue);
 }
 
 //@cindex InitPacking
@@ -580,7 +590,7 @@ STATIC_INLINE void InitClosureQueue(void)
 
     if (ClosureQueue==NULL) {
         ClosureQueue = (StgClosure**)
-            pmMallocBytes(RTS_PACK_BUFFER_SIZE,
+            stgMallocBytes(RTS_PACK_BUFFER_SIZE,
                           "InitClosureQueue");
     }
 }
@@ -2232,8 +2242,8 @@ StgClosure* restoreUnpackState(UnpackInfo* unpack,StgClosure** graphroot,
   offsetpadding = unpack->offsetpadding;
 
   // free allocated memory:
-  pmFree(unpack->queue);
-  pmFree(unpack);
+  stgFree(unpack->queue);
+  stgFree(unpack);
 
   IF_PAR_DEBUG(pack,
 	       debugBelch("unpack state restored (graphroot: %p, current "
@@ -2256,7 +2266,7 @@ StgClosure** saveQueue(nat* size) {
   IF_PAR_DEBUG(packet,
 	       debugBelch("saveQueue: saving ");
 	       PrintClosureQueue());
-  queue = (StgClosure **) pmMallocBytes(*size * sizeof(StgClosure*),
+  queue = (StgClosure **) stgMallocBytes(*size * sizeof(StgClosure*),
 					 "saveQueue: Queue");
   memcpy(queue, ClosureQueue+clq_pos, *size * sizeof(StgClosure*));
   IF_PAR_DEBUG(packet,
@@ -2274,7 +2284,7 @@ UnpackInfo* saveUnpackState(StgClosure* graphroot, StgClosure* parent,
   UnpackInfo* save;
   nat size;
 
-  save = pmMallocBytes(sizeof(UnpackInfo),"saveUnpackState: UnpackInfo");
+  save = stgMallocBytes(sizeof(UnpackInfo),"saveUnpackState: UnpackInfo");
   IF_PAR_DEBUG(pack,
 	       debugBelch("saving current unpack state at %p",save);
 	       debugBelch("graphroot: %p, current parent: %p (ptr %d of %d, vhs= %d)",
