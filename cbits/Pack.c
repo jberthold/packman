@@ -260,7 +260,7 @@ StgClosure        *UnpackGraph(pmPackBuffer *packBuffer,
 			       Capability* cap);
 */
 // internal function working on the raw data (instead of pmPackBuffer)
-StgClosure* UnpackGraph_(StgWord *buffer, StgInt size, Capability* cap);
+StgClosure* pmUnpackGraph_(StgWord *buffer, StgInt size, Capability* cap);
 
 // unpacks one closure (common prelude + switches to special cases)
 static  StgClosure *UnpackClosure(StgWord **bufptrP, Capability* cap);
@@ -882,7 +882,7 @@ STATIC_INLINE void PackOffset(StgWord offset)
 
   */
 
-pmPackBuffer* PackNearbyGraph(StgClosure* closure, StgTSO* tso)
+pmPackBuffer* pmPackNearbyGraph(StgClosure* closure, StgTSO* tso)
 {
     StgWord errcode = P_SUCCESS; // error code returned by PackClosure
 
@@ -1639,8 +1639,7 @@ static StgWord PackArray(StgClosure *closure)
   Done by UnpackClosure(), see there.
 */
 
-StgClosure* UnpackGraph(pmPackBuffer *packBuffer,
-                        STG_UNUSED Port inPort, Capability* cap)
+StgClosure* pmUnpackGraph(pmPackBuffer *packBuffer, Capability* cap)
 {
 
     StgClosure *graphroot;
@@ -1660,7 +1659,7 @@ StgClosure* UnpackGraph(pmPackBuffer *packBuffer,
                 packBuffer->size, packBuffer->unpacked_size));
 #endif
 
-    graphroot = UnpackGraph_(packBuffer->buffer, packBuffer->size, cap);
+    graphroot = pmUnpackGraph_(packBuffer->buffer, packBuffer->size, cap);
 
     // if we hit this case, we are outside the deserialisation code.
     // Therefore: complain and abort the program.
@@ -1684,7 +1683,7 @@ StgClosure* UnpackGraph(pmPackBuffer *packBuffer,
 // (used with with an immutable Haskell ByteArray# as buffer for
 // deserialisation). This function returns NULL upon
 // errors/inconsistencies in buffer (avoiding to abort the program).
-StgClosure* UnpackGraph_(StgWord *buffer, StgInt size, Capability* cap)
+StgClosure* pmUnpackGraph_(StgWord *buffer, StgInt size, Capability* cap)
 {
     StgWord* bufptr;
     StgClosure *closure, *parent, *graphroot;
@@ -2413,7 +2412,7 @@ StgClosure* tryPackToMemory(StgClosure* graphroot,
 
     ACQUIRE_LOCK(&pack_mutex);
 
-    buffer = PackNearbyGraph(graphroot, tso);
+    buffer = pmPackNearbyGraph(graphroot, tso);
 
     if (isPackError(buffer)) {
         // packing hit an error, return this error to caller
@@ -2460,7 +2459,7 @@ StgClosure* UnpackGraphWrapper(StgArrWords* packBufferArray, Capability* cap)
     buffer = (StgWord*) packBufferArray->payload;
 
     // unpack. Might return NULL in case the buffer was inconsistent.
-    newGraph = UnpackGraph_(buffer, size, cap);
+    newGraph = pmUnpackGraph_(buffer, size, cap);
 
     RELEASE_LOCK(&pack_mutex);
 
