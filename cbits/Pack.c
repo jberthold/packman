@@ -88,6 +88,9 @@ STATIC_INLINE StgClosure *DeQueueClosure(void);
 static void InitPacking(rtsBool unpack);
 static void ClearPackBuffer(void);
 
+// Init pack buffer at startup
+static void InitPackBuffer(void) __attribute__((constructor));
+
 // de-init:
 static void DonePacking(void);
 
@@ -281,9 +284,6 @@ void freePackBuffer(void)
 //@cindex InitPacking
 static void InitPacking(rtsBool unpack)
 {
-    if (globalPackBuffer == NULL) {
-        InitPackBuffer();
-    }
     if (unpack) {
         /* allocate a GA-to-GA map (needed for ACK message) */
         // InitPendingGABuffer(RtsFlags.ParFlags.packBufferSize);
