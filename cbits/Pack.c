@@ -25,15 +25,15 @@ extern char* info_type_by_ip(StgInfoTable*);
 
 /* Internal hash table implementation */
 typedef struct hashtable HashTable;
-extern HashTable * allocHashTable    ( void );
-extern void *      lookupHashTable ( HashTable *table, StgWord key );
-extern void        insertHashTable ( HashTable *table, StgWord key, void *data );
-extern void *      removeHashTable ( HashTable *table, StgWord key, void *data );
-extern void freeHashTable ( HashTable *table, void (*freeDataFun)(void *) );
+extern HashTable *allocHashTable(void);
+extern void *lookupHashTable(HashTable *table, StgWord key);
+extern void  insertHashTable(HashTable *table, StgWord key, void *data);
+extern void *removeHashTable(HashTable *table, StgWord key, void *data);
+extern void  freeHashTable(HashTable *table, void (*freeDataFun)(void *));
 
 /* Internal malloc wrapper functions */
 extern void *stgMallocBytes(int n, char *msg) GNUC3_ATTRIBUTE(__malloc__);
-extern void stgFree(void* p);
+extern void  stgFree(void* p);
 
 // for better reading only... ATTENTION: given in bytes!
 /* #define RTS_PACK_BUFFER_SIZE   RtsFlags.ParFlags.packBufferSize */
