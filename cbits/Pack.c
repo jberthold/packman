@@ -19,106 +19,12 @@
 #include "Errors.h"
 #include "Utils.h"
 
-
-
-#define messageBlackHole(c,s)  0
 #define DEBUG_HEADROOM  2
 #define IF_PAR_DEBUG(c,s)
 
-
-/* -----------------------------------------------------------------------------
-   Closure types
-
-   NOTE: must be kept in sync with the closure types in includes/ClosureTypes.h
-   -------------------------------------------------------------------------- */
-
-char *closure_type_names2[] = {
-    [INVALID_OBJECT]        = "INVALID_OBJECT",
-    [CONSTR]                = "CONSTR",
-    [CONSTR_1_0]            = "CONSTR_1_0",
-    [CONSTR_0_1]            = "CONSTR_0_1",
-    [CONSTR_2_0]            = "CONSTR_2_0",
-    [CONSTR_1_1]            = "CONSTR_1_1",
-    [CONSTR_0_2]            = "CONSTR_0_2",
-    [CONSTR_STATIC]         = "CONSTR_STATIC",
-    [CONSTR_NOCAF_STATIC]   = "CONSTR_NOCAF_STATIC",
-    [FUN]                   = "FUN",
-    [FUN_1_0]               = "FUN_1_0",
-    [FUN_0_1]               = "FUN_0_1",
-    [FUN_2_0]               = "FUN_2_0",
-    [FUN_1_1]               = "FUN_1_1",
-    [FUN_0_2]               = "FUN_0_2",
-    [FUN_STATIC]            = "FUN_STATIC",
-    [THUNK]                 = "THUNK",
-    [THUNK_1_0]             = "THUNK_1_0",
-    [THUNK_0_1]             = "THUNK_0_1",
-    [THUNK_2_0]             = "THUNK_2_0",
-    [THUNK_1_1]             = "THUNK_1_1",
-    [THUNK_0_2]             = "THUNK_0_2",
-    [THUNK_STATIC]          = "THUNK_STATIC",
-    [THUNK_SELECTOR]        = "THUNK_SELECTOR",
-    [BCO]                   = "BCO",
-    [AP]                    = "AP",
-    [PAP]                   = "PAP",
-    [AP_STACK]              = "AP_STACK",
-    [IND]                   = "IND",
-    [IND_PERM]              = "IND_PERM",
-    [IND_STATIC]            = "IND_STATIC",
-    [RET_BCO]               = "RET_BCO",
-    [RET_SMALL]             = "RET_SMALL",
-    [RET_BIG]               = "RET_BIG",
-    [RET_FUN]               = "RET_FUN",
-    [UPDATE_FRAME]          = "UPDATE_FRAME",
-    [CATCH_FRAME]           = "CATCH_FRAME",
-    [UNDERFLOW_FRAME]       = "UNDERFLOW_FRAME",
-    [STOP_FRAME]            = "STOP_FRAME",
-    [BLOCKING_QUEUE]        = "BLOCKING_QUEUE",
-    [BLACKHOLE]             = "BLACKHOLE",
-    [MVAR_CLEAN]            = "MVAR_CLEAN",
-    [MVAR_DIRTY]            = "MVAR_DIRTY",
-    [TVAR]                  = "TVAR",
-    [ARR_WORDS]             = "ARR_WORDS",
-    [MUT_ARR_PTRS_CLEAN]    = "MUT_ARR_PTRS_CLEAN",
-    [MUT_ARR_PTRS_DIRTY]    = "MUT_ARR_PTRS_DIRTY",
-    [MUT_ARR_PTRS_FROZEN0]  = "MUT_ARR_PTRS_FROZEN0",
-    [MUT_ARR_PTRS_FROZEN]   = "MUT_ARR_PTRS_FROZEN",
-    [MUT_VAR_CLEAN]         = "MUT_VAR_CLEAN",
-    [MUT_VAR_DIRTY]         = "MUT_VAR_DIRTY",
-    [WEAK]                  = "WEAK",
-    [PRIM]                  = "PRIM",
-    [MUT_PRIM]              = "MUT_PRIM",
-    [TSO]                   = "TSO",
-    [STACK]                 = "STACK",
-    [TREC_CHUNK]            = "TREC_CHUNK",
-    [ATOMICALLY_FRAME]      = "ATOMICALLY_FRAME",
-    [CATCH_RETRY_FRAME]     = "CATCH_RETRY_FRAME",
-    [CATCH_STM_FRAME]       = "CATCH_STM_FRAME",
-    [WHITEHOLE]             = "WHITEHOLE"
-};
-
-char *
-info_type2(StgClosure *closure) {
-    return closure_type_names2[get_itbl(closure)->type];
-}
-
-char *
-info_type_by_ip2(StgInfoTable *ip) {
-    return closure_type_names2[ip->type];
-}
-
-#define info_type  info_type2
-#define info_type_by_ip  info_type_by_ip2
-
-/* later:
-#include "RTTables.h" // packet split operates on inports,
-                      // needs types and methods
-*/
-
-
-/* nat messageBlackHole(Capability *cap, MessageBlackHole *msg) { */
-    /* return 0; */
-/* } */
-
+/* internal functions in the GHC runtime, but very stable */
+extern char* info_type(StgClosure*);
+extern char* info_type_by_ip(StgInfoTable*);
 
 // for better reading only... ATTENTION: given in bytes!
 /* #define RTS_PACK_BUFFER_SIZE   RtsFlags.ParFlags.packBufferSize */
