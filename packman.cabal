@@ -33,10 +33,13 @@ library
   if flag(debug)
     cc-options:      -g
 
-executable test
+executable test-server
   hs-source-dirs:    test
-  main-is:           Main.hs
+  main-is:           Server.hs
   build-depends:     base >= 4.5.0,
+                     network,
+                     bytestring,
+                     binary,
                      packman
   if flag(debug)
     ghc-options:     -debug
