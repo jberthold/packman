@@ -44,6 +44,18 @@ executable test-server
   if flag(debug)
     ghc-options:     -debug
 
+executable workpool
+  hs-source-dirs:    test
+  main-is:           Workpool.hs
+  build-depends:     base >= 4.6.0,
+                     network,
+                     bytestring,
+                     binary,
+                     process,
+                     packman
+  if flag(debug)
+    ghc-options:     -debug
+
 source-repository head
   type:     git
   location: git://github.com/mbudde/packman.git
