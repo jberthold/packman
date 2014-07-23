@@ -33,28 +33,28 @@ library
   if flag(debug)
     cc-options:      -g
 
-executable test-server
-  hs-source-dirs:    test
-  main-is:           Server.hs
-  build-depends:     base >= 4.5.0,
-                     network,
-                     bytestring,
-                     binary,
-                     packman
-  if flag(debug)
-    ghc-options:     -debug
+-- executable test-server
+--   hs-source-dirs:    test
+--   main-is:           Server.hs
+--   build-depends:     base >= 4.5.0,
+--                      network,
+--                      bytestring,
+--                      binary,
+--                      packman
+--   if flag(debug)
+--     ghc-options:     -debug
 
-executable workpool
-  hs-source-dirs:    test
-  main-is:           Workpool.hs
-  build-depends:     base >= 4.6.0,
-                     network,
-                     bytestring,
-                     binary,
-                     process,
-                     packman
-  if flag(debug)
-    ghc-options:     -debug
+-- executable workpool
+--   hs-source-dirs:    test
+--   main-is:           Workpool.hs
+--   build-depends:     base >= 4.6.0,
+--                      network,
+--                      bytestring,
+--                      binary,
+--                      process,
+--                      packman
+--   if flag(debug)
+--     ghc-options:     -debug
 
 source-repository head
   type:     git
