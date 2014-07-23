@@ -89,7 +89,7 @@ static void InitPacking(rtsBool unpack);
 static void ClearPackBuffer(void);
 
 // Init pack buffer at startup
-static void InitPackBuffer(void) __attribute__((constructor));
+static void pmInitPackBuffer(void) __attribute__((constructor));
 
 // de-init:
 static void DonePacking(void);
@@ -102,20 +102,6 @@ STATIC_INLINE StgInfoTable* get_closure_info(StgClosure* node, StgInfoTable* inf
                                              nat *size, nat *ptrs,
                                              nat *nonptrs, nat *vhs);
 
-// declared in Parallel.h
-// rtsBool IsBlackhole(StgClosure* closure);
-
-
-/* used here and by the primitive which creates new channels:
-   creating a blackhole closure from scratch.
-   Declared in Parallel.h
-StgClosure* createBH(Capability *cap);
-
-   used in HLComms: creating a list node
-   Declared in Parallel.h
-StgClosure* createListNode(Capability *cap,
-                           StgClosure *head, StgClosure *tail);
-*/
 
 /* TODO: for packet splitting, make RoomToPack a procedure, which
    always succeeds, by sending partial data away when no room is
@@ -194,17 +180,6 @@ static StgClosure *UnpackPAP(StgInfoTable *ip,StgWord **bufptrP,
 static StgClosure *UnpackArray(StgInfoTable *info, StgWord **bufptrP,
                                Capability* cap);
 
-/* A special structure used as the "owning thread" of system-generated
- * blackholes.  Layout [ hdr | payload ], holds a TSO header.info and blocking
- * queues in the payload field.
- *
- * Used in: createBH (here),
- * Threads::updateThunk + Messages::messageBlackHole (special treatment)
- * ParInit::synchroniseSystem(init),
- * Evac::evacuate (do not evacuate) and GC::garbageCollect (evac. BQueue)
- */
-StgInd stg_system_tso;
-
 
 /* Global (static) variables and declarations: As soon as we allow
    threaded+parallel, we need a lock, or all these will become fields
@@ -250,7 +225,7 @@ void checkPacket(pmPackBuffer *packBuffer);
 //   utilities and helpers
 
 /* @initPackBuffer@ initialises the packing buffer etc. called at startup */
-void InitPackBuffer(void)
+void pmInitPackBuffer(void)
 {
     ASSERT(RTS_PACK_BUFFER_SIZE > 0);
 
@@ -273,7 +248,7 @@ void InitPackBuffer(void)
     keepCAFs = rtsTrue;
 }
 
-void freePackBuffer(void)
+void pmfreePackBuffer(void)
 {
     if (globalPackBuffer) // has been allocated (called from ParInit, so always)
         stgFree(globalPackBuffer);
@@ -304,26 +279,6 @@ static void InitPacking(rtsBool unpack)
 
     pack_locn = 0;         /* the index into the actual pack buffer */
     unpacked_size = 0;     /* the size of the whole graph when unpacked */
-}
-
-/* clear buffer, but use the old queue (stuffed) and the old offset table
-   essentially a copy of InitPacking without offsetTable
-   important: recall old pack_location as "offsetpadding" to allow
-   cross-packet offsets. */
-static void ClearPackBuffer(void)
-{
-    // no need to allocate memory again
-    ASSERT(globalPackBuffer != NULL);
-    ASSERT(ClosureQueue != NULL);
-
-    // stuff the closure queue (would soon be full if we just continue)
-    StuffClosureQueue();
-
-    offsetpadding += pack_locn; // set to 1 when started (un)packing...
-
-    // Buffer remains the same, admin. fields invalidated
-    pack_locn = 0;         // the index into the actual pack buffer
-    unpacked_size = 0;     // the size of the whole graph when unpacked
 }
 
 /* DonePacking is called when we've finished packing.  It releases
@@ -491,7 +446,7 @@ get_closure_info(StgClosure* node, StgInfoTable* info,
 }
 
 /* quick test for blackholes. Available somewhere else? */
-rtsBool IsBlackhole(StgClosure* node)
+rtsBool pmIsBlackhole(StgClosure* node)
 {
     // since ghc-7.0, blackholes are used as indirections. inspect indirectee.
     if(((StgInfoTable*)get_itbl(UNTAG_CLOSURE(node)))->type == BLACKHOLE) {
@@ -506,46 +461,6 @@ rtsBool IsBlackhole(StgClosure* node)
         }
     }
     return rtsFalse;
-}
-
-StgClosure* createBH(Capability *cap)
-{
-    StgClosure *new;
-
-    // a blackhole carries one pointer of payload, see StgMiscClosures.cmm, so
-    // we allocate 2 words. The payload indicates the blackhole owner, in our
-    // case it is the "system" (or later, the cap, for -threaded rts).
-    new = (StgClosure*) allocate(cap, 2);
-
-    SET_HDR(new, &stg_BLACKHOLE_info, CCS_SYSTEM); // ccs to be checked!
-
-    new->payload[0] = (StgClosure*) &stg_system_tso;
-    // see above. Pseudo-TSO (has TSO info pointer) owning all
-    // system-created black holes, and storing BQs.
-
-    return new;
-}
-
-// cons node info pointer, from GHC.Base
-#define CONS_INFO ghczmprim_GHCziTypes_ZC_con_info
-// constructor tag for pointer tagging. We return a tagged pointer here!
-#define CONS_TAG  2
-extern const StgInfoTable CONS_INFO[];
-
-// creating a list node. returns a tagged pointer.
-StgClosure* createListNode(Capability *cap, StgClosure *head, StgClosure *tail)
-{
-    StgClosure *new;
-
-    // a list node (CONS) carries two pointers => 3 words to allocate
-    // if we have given a capability, we can allocateLocal (cheaper, no lock)
-    new = (StgClosure*) allocate(cap, 3);
-
-    SET_HDR(new, CONS_INFO, CCS_SYSTEM); // to be checked!!!
-    new->payload[0] = head;
-    new->payload[1] = tail;
-
-    return TAG_CLOSURE(CONS_TAG,new);
 }
 
 
@@ -1145,7 +1060,7 @@ static StgWord PackGeneric(StgClosure* closure)
     /* get info about basic layout of the closure */
     get_closure_info(closure, NULL, &size, &ptrs, &nonptrs, &vhs);
 
-    ASSERT(!IsBlackhole(closure));
+    ASSERT(!pmIsBlackhole(closure));
 
     IF_DEBUG(packet,
             debugBelch("*>== %p (%s): generic packing"
@@ -2319,7 +2234,7 @@ UnpackInfo* saveUnpackState(StgClosure* graphroot, StgClosure* parent,
 // pack, then copy the buffer into newly (Haskell-)allocated space
 // (unless packing was blocked, in which case we return the error code)
 // This implements primitive serialize# and #trySerialize (if tso==NULL).
-StgClosure* tryPackToMemory(StgClosure* graphroot,
+StgClosure* pmtryPackToMemory(StgClosure* graphroot,
                             StgTSO* tso, Capability* cap)
 {
     pmPackBuffer* buffer;
@@ -2361,7 +2276,7 @@ StgClosure* tryPackToMemory(StgClosure* graphroot,
 
 // unpacking from a Haskell array (using the Haskell Byte Array)
 // may return error code P_GARBLED
-StgClosure* UnpackGraphWrapper(StgArrWords* packBufferArray, Capability* cap)
+StgClosure* pmUnpackGraphWrapper(StgArrWords* packBufferArray, Capability* cap)
 {
     nat size;
     StgWord *buffer;
