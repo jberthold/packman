@@ -3,11 +3,11 @@ version:             0.1
 synopsis:            Serialization library for GHC
 category:            Serialization, Data, GHC
 license:             BSD3
-author:              Michael Budde, Ásbjørn V. Jøkladal
+author:              Michael Budde, Ásbjørn V. Jøkladal, Jost Berthold
 maintainer:          mbudde@gmail.com
 build-type:          Simple
 cabal-version:       >= 1.8
-tested-with:         GHC==7.8.2
+tested-with:         GHC==7.8.2, GHC==7.8.3
 extra-source-files:  cbits/Wrapper.cmm
                      cbits/Pack.c
                      cbits/Errors.h
@@ -19,19 +19,20 @@ flag debug
 
 library
   exposed-modules:   GHC.Packing
-  build-depends:     base >= 4.5.0,
-                     ghc-prim,
-                     array,
-                     binary,
-                     bytestring
+  build-depends:     base >= 4.7,
+                     ghc >= 7.8,
+                     ghc-prim >= 0.3,
+                     array >= 0.5,
+                     binary >= 0.7,
+                     bytestring >= 0.10
   if flag(debug)
-    ghc-options:     -debug
+    ghc-options:     -debug -optc-DDEBUG
 
   c-sources:         cbits/Wrapper.cmm
                      cbits/Pack.c
   include-dirs:      cbits
   if flag(debug)
-    cc-options:      -g
+    cc-options:      -g -DDEBUG
 
 -- executable test-server
 --   hs-source-dirs:    test
