@@ -1,18 +1,13 @@
 module Main where
  
-import Data.Serialize.Packman
+import GHC.Packing -- Data.Serialize.Packman
+import Control.Exception
 
 data Foo = A | B | C | D deriving Show
 
-packAndPrint o = case pack o of
-                   Left err -> putStrLn "Error"
-                   Right _ -> putStrLn "Serialized!"
+packAndPrint o = trySerialize o >> putStrLn "Serialized"
 
-packAndUnpack o = case pack o of
-                    Left err -> putStrLn "Error"
-                    Right buf -> case unpack buf of
-                      Left err -> putStrLn "Unpack error"
-                      Right a  -> print a
+packAndUnpack o = trySerialize o >>= deserialize >>= print
 
 main = do
   packAndPrint A

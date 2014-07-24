@@ -1,23 +1,21 @@
-{-# OPTIONS -XScopedTypeVariables -XRecordWildCards -XBangPatterns
-            -XMagicHash -XUnboxedTuples
-            -XDeriveDataTypeable
-            -cpp #-}
-{-# LANGUAGE GHCForeignImportPrim #-}
-{-# LANGUAGE ForeignFunctionInterface #-}
-{-# LANGUAGE UnliftedFFITypes #-}
-
+{-# LANGUAGE RecordWildCards, BangPatterns, DeriveDataTypeable, CPP,
+             ScopedTypeVariables #-}
+{-# LANGUAGE MagicHash, UnboxedTuples #-}
+{-# LANGUAGE GHCForeignImportPrim, ForeignFunctionInterface, 
+             UnliftedFFITypes #-}
 {-# OPTIONS_HADDOCK prune #-}
 
 {- | 
 
 Module      : GHC.Packing
-Copyright   : (c) Jost Berthold, 2010-2013,
+Copyright   : (c) Jost Berthold, 2010-2014,
 License     : probably BSD3 (soon)
 Maintainer  : berthold@diku.dk
 Stability   : experimental
-Portability : no (depends on GHC runtime support)
+Portability : no (depends on GHC internals)
 
-Serialisation of Haskell data structures using runtime system support.
+Serialisation of Haskell data structures TODO REWRITE TECH PARTS FOR
+FOREIGNPRIMOP VERSION.
 
 Haskell heap structures can be serialised, capturing their current
 state of evaluation, and deserialised later during the same program
@@ -78,8 +76,8 @@ module GHC.Packing
 
 -- could make a compatibility layer for Eden-GHC-7.x (supports
 -- serialize#) but we rather bail out here.
-#if __GLASGOW_HASKELL__ != 708
-#error This module assumes GHC-7.8
+#if __GLASGOW_HASKELL__ < 708
+#error This module assumes GHC-7.8 or above
 #endif
 
 import GHC.IO ( IO(..) )
@@ -114,6 +112,8 @@ import Control.Monad( when )
 import qualified Control.Exception as E
   -- Typeable is also required for this
 
+import Control.Concurrent.MVar -- for a global lock
+
 ----------------------------------------------
 
 -- replacement for the old GHC.Constants.TargetWord. This is a cheap
@@ -146,7 +146,7 @@ foreign import prim "stg_unpack" unpack# :: ByteArray# -> State# s -> (# State# 
 -- This should ensure (as of GHC.7.8) that types with the same name
 -- but different definition get different hashes.  (however, we also
 -- require the executable to be exactly the same, so this is not
--- "strictly necessary" anyway.
+-- "strictly necessary" anyway).
 -----------------------------------------------
 
 -- Typeable context for dynamic type checks. 
@@ -186,35 +186,47 @@ prgHash = unsafePerformIO $
 -- but only when /externalising/ data (writing to disk, for instance).
 data Serialized a = Serialized { packetData :: ByteArray# }
 
+-- serialisation and deserialisation code are not thread-safe and need
+-- exclusive access (for now). This CAF-based solution is fragile but
+-- at least easily portable. Essential: should never be inlined!
+{-# NOINLINE globalLock #-}
+globalLock :: MVar ()
+globalLock = unsafePerformIO (newMVar ())
+
+
+withLockHeld :: IO a -> IO a
+withLockHeld = E.bracket_ (takeMVar globalLock) (putMVar globalLock ())
+
 -- | Non-blocking serialisation routine using @'PackException'@s to
 -- signal errors. This version does not block the calling thread when
 -- a black hole is found, but instead signals the condition by the
 -- @'P_BLACKHOLE'@ exception.
 trySerialize :: a -> IO (Serialized a) -- throws PackException (RTS)
-trySerialize x = do r <- trySer_ x -- a more verbose way of writing it...
-                    case r of
-                      Left err     -> E.throw err
-                      Right packed -> return packed
+trySerialize x = withLockHeld $ trySer_ x >>= either E.throw return
+
 -- using a helper function
 trySer_ :: a -> IO (Either PackException (Serialized a))
 trySer_ x = IO (\s -> case tryPack# (unsafeCoerce# x :: Any) s of
                         (# s', 0#, bArr# #) -> (# s', Right (Serialized { packetData=bArr# }) #)
-                        (# s', n#, _ #)     -> (# s', Left (tagToEnum# n# ) #)
+                        (# s', n#, _ #)     -> (# s', Left (decodeEx n# ) #)
                )
 
 -- | Deserialisation function. May throw @'PackException'@ @'P_GARBLED'@
-deserialize :: Serialized a -> IO a  -- throws PackException (garbled)
-deserialize ( Serialized{..} ) = IO $ 
-              \s -> case unpack# packetData s of
-                      (# s', 0#, x #) -> (# s', x #)
-                      (# s', n#, _ #) -> (# s', E.throw ((tagToEnum# n#)::PackException) #) 
+deserialize :: Serialized a -> IO a
+deserialize = withLockHeld . deser_
+
+deser_ :: Serialized a -> IO a  -- throws PackException (garbled)
+deser_ ( Serialized{..} ) 
+    = IO $ \s -> case unpack# packetData s of
+                   (# s', 0#, x #) -> (# s', x #)
+                   (# s', n#, _ #) -> (# s', E.throw (decodeEx n#) #)
 
 --------------------------------------------------------
 
 -- | Packing exception codes, matching error codes implemented in the
 -- runtime system or describing errors which can occur within Haskell.
-data PackException = P_SUCCESS      -- | all fine, ==0. We do not expect this one to occur.
-     -- Error codes from the runtime system: (how can I teach haddock to make this a heading?)
+data PackException = P_SUCCESS      -- | no error, ==0. We do not expect this one to occur.
+     -- Error codes from the runtime system:
      | P_BLACKHOLE    -- ^ RTS: packing hit a blackhole (not blocking thread)
      | P_NOBUFFER     -- ^ RTS: buffer too small (increase RTS buffer with -qQ<size>)
      | P_CANNOT_PACK  -- ^ RTS: found a closure that cannot be packed (MVar, TVar)
@@ -226,7 +238,18 @@ data PackException = P_SUCCESS      -- | all fine, ==0. We do not expect this on
      | P_BinaryMismatch -- ^ Haskell: Executable binaries do not match
      | P_TypeMismatch   -- ^ Haskell: Packet data encodes unexpected type
      deriving (Eq, Ord, Typeable)
--- enum.. we will use tagtoenum# later
+
+-- | decode an 'Int#' to a @'PackException'@
+decodeEx :: Int# -> PackException
+-- with hsc2hs: #include "Errors.h"; #define DECODE(ex) decode #{const ex} = ex
+decodeEx 0# = P_SUCCESS -- unexpected
+decodeEx 1# = P_BLACKHOLE
+decodeEx 2# = P_NOBUFFER
+decodeEx 3# = P_CANNOT_PACK
+decodeEx 4# = P_UNSUPPORTED
+decodeEx 5# = P_IMPOSSIBLE
+decodeEx 6# = P_GARBLED
+decodeEx i#  = error $ "Error value " ++ show (I# i#) ++ " not defined!"
 
 instance Show PackException where
     show P_SUCCESS = "No error." -- we do not expect to see this

@@ -12,10 +12,12 @@ extra-source-files:  cbits/Wrapper.cmm
                      cbits/Pack.c
                      cbits/Errors.h
                      cbits/Types.h
+                     test/pack.old
 
-flag debug
+flag Debug
   description:       Enable debug support
   default:           False
+-- we abuse flags "prof(p)" and "sparks(r)" and use "sanity(S)"
 
 library
   exposed-modules:   GHC.Packing
@@ -33,6 +35,14 @@ library
   include-dirs:      cbits
   if flag(debug)
     cc-options:      -g -DDEBUG
+
+test-suite simpletest
+  type:              exitcode-stdio-1.0
+  main-is:           test/TestSerialisation.hs
+  build-depends:     base, array, binary, ghc-prim, bytestring, directory, packman
+  if flag(debug)
+    ghc-options:     -debug
+
 
 -- executable test-server
 --   hs-source-dirs:    test
