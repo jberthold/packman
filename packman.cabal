@@ -6,7 +6,7 @@ license:             BSD3
 author:              Michael Budde, Ásbjørn V. Jøkladal, Jost Berthold
 maintainer:          mbudde@gmail.com
 build-type:          Simple
-cabal-version:       >= 1.8
+cabal-version:       >= 1.18
 tested-with:         GHC==7.8.2, GHC==7.8.3
 extra-source-files:  cbits/Wrapper.cmm
                      cbits/Pack.c
@@ -21,6 +21,7 @@ flag Debug
 
 library
   exposed-modules:   GHC.Packing
+--  other-modules:     Bar
   build-depends:     base >= 4.7,
                      ghc >= 7.8,
                      ghc-prim >= 0.3,
@@ -33,13 +34,36 @@ library
   c-sources:         cbits/Wrapper.cmm
                      cbits/Pack.c
   include-dirs:      cbits
+  default-language:  Haskell2010
   if flag(debug)
     cc-options:      -g -DDEBUG
 
 test-suite simpletest
   type:              exitcode-stdio-1.0
-  main-is:           test/TestSerialisation.hs
-  build-depends:     base, array, binary, ghc-prim, bytestring, directory, packman
+  main-is:           Test/TestSerialisation.hs
+  build-depends:     base >= 4.7,
+                     directory >= 1.2,
+                     ghc-prim >= 0.3,
+                     array >= 0.5,
+                     binary >= 0.7,
+                     bytestring >= 0.10,
+                     packman
+  default-language:  Haskell2010
+  if flag(debug)
+    ghc-options:     -debug
+
+test-suite alltests
+  type:              detailed-0.9
+  test-module:       Test.AllTests
+  build-depends:     base >= 4.7,
+                     directory >= 1.2,
+                     ghc-prim >= 0.3,
+                     array >= 0.5,
+                     binary >= 0.7,
+                     bytestring >= 0.10,
+                     Cabal >= 1.18,
+                     packman
+  default-language:  Haskell2010
   if flag(debug)
     ghc-options:     -debug
 
