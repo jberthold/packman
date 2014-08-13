@@ -12,16 +12,17 @@ import Control.Concurrent
 import System.Environment
 import System.IO
 import System.Directory
+import System.Exit
 
 import qualified Data.ByteString as B
 
-import qualified Control.Exception as E
+import Control.Exception
 
 -- this test uses the trySerialize routine. We expect to trigger some
 -- exceptions and catch them as appropriate.
 
 catchPackExc :: IO () -> IO ()
-catchPackExc io = io `E.catch` (\e -> putStrLn (show (e::PackException)))
+catchPackExc io = io `catch` (\e -> putStrLn (show (e::PackException)))
 
 -- need a time-wasting function which allocates...
 nfib :: Integer -> Integer
@@ -31,77 +32,70 @@ nfib n = let n1 = nfib (n-1)
              n2 = nfib (n-2)
          in 1 + 2*n1 + n2 - n1
 
--- test exceptions. When running this, one should capture
--- stdout (but not stderr) and compare to reference output
---testExc :: IO ()
---testExc
+fib :: Int -> Int 
+fib x | x <= 1   = 1
+      |otherwise = fib (x-1) + fib (x-2)
+
+-- | duplicate data
+duplicate :: a -> IO a
+duplicate x = deserialize =<< trySerialize x 
+
+-- | 
+testeval :: (Show b) => String -> a -> (a -> b) -> String -> IO ()
+testeval name dat f expected
+    = do putStr name
+         dat' <- duplicate dat
+         let out = show (f dat')
+         if (out /= expected)
+         then do putStrLn (": FAILED\t unexpected " ++ out) 
+                 error (name ++ " failed")
+         else putStrLn (": OK\t" ++ out)
+
 main
    = do hSetBuffering stdout NoBuffering
 
-        putStrLn "Test program for packing/serialization:"
+        args <- getArgs
+	let u = if (null args) then 40 else read (head args)
+        putStrLn "Test program for serialisation"
+        putStrLn "Evaluating some fib expressions before and after packing"
+        let input  = [20..u]
+	    flt    =  filter (> 10000) 
+	    fibL   = (flt . map fib) input
+-- [10946,17711,28657,46368,75025,121393,196418,317811,514229,832040,1346269]
 
-        let n    = 1   -- if (length args < 2) then 1 else read (args!!1)
-            size = 128 -- if null args then 128 else read (head args)::Int
-            arr :: A.Array Int Int
-            arr  = A.array (0,size-1) 
-                   [ (i,i) | i <- [0..size-1] ]
+        putStrLn "normal evaluation (take 3), should be \n[10946,17711,28657]"
+	putStrLn (show $ take 3 fibL)
 
-        let output = A.amap (2*) arr
-        putStrLn $ show $ take n $ A.elems output
+        testeval "packing one part" fibL (take 5) 
+                     "[10946,17711,28657,46368,75025]"
 
-        putStrLn "now packing the array (buffer big enough?)"
-        
-        catchPackExc $
-         do packet1 <- trySerialize output
-            -- putStrLn (show packet1)
-            putStrLn "now unpacking (deserialize):"
-            copy <- deserialize packet1
+        let f2 x y = fib (x+y)
+        testeval "packing a function (2 arg.s)" f2 
+                     (\f -> (take 3 . flt . map (f 0)) input)
+                     "[10946,17711,28657]"
 
-            putStrLn ("unpacked, now evaluate")
-            putStrLn (show copy)
-
-        putStrLn "packing some forbidden types"
-        t <- myThreadId
-        putStrLn "next should be unsupported"
-        catchPackExc (trySerialize t >>= print)
-
-        m <- newEmptyMVar :: IO (MVar Integer)
-        putStrLn "next should be cannotpack"
-        catchPackExc (trySerialize m >>= print)
-
-        putStrLn "next should hit a blackhole"
-        let b = nfib (-1) -- will loop, but so far unevaluated
-        putMVar m b
-        forkIO $ do n <- takeMVar m
-                    case n of -- poor child thread will evaluate bottom
-                      something -> error $"bottom is " ++ show something ++ "!"
-        yield -- let child thread pick up the trap
-        catchPackExc (trySerialize b >>= print)
-
-        let arr2 = A.listArray (0,n-1) (take n (A.elems arr)) :: A.Array Int Int
-        putStrLn "this - finally - should work"
-        putStrLn ( show $ arr2 A.! 0 ) -- forcing it
-        catchPackExc $
-          do p2 <- trySerialize arr2
-             arr3 <- deserialize p2
-             print arr3
-
-        putStrLn "trying to deserialise other binary's data. Expected: binary mismatch"
-        catchPackExc $ do a <- decodeFromFile "pack.old"
-                          print (a::A.Array Int Int)
-
-        putStrLn "trying to deserialise wrong type from file. Expected: type mismatch"
-        catchPackExc $ do encodeToFile "pack" arr2 
-                          a <- decodeFromFile "pack"
-                          print (a::A.Array Int Double)
-
-        putStrLn "trying to deserialise truncated data. Expected: parse error"
-        blob <- B.readFile "pack"
-        B.writeFile "pack" (B.take 50 blob) -- take more than FingerPrint (4 x Word64)
-        catchPackExc $ do p <- getProgName 
-                          x <- decodeFromFile "pack" :: IO (A.Array Int Int)
-                          print x
-        (removeFile "pack") `E.catch` (\e -> print (e::E.SomeException) )
+        let f3 x a b c y d = head $ map (map fib) 
+                             [[(x+a+b+c+d)-const .. (y+a+b+c+d)-const ]]
+	    const  = head fibL - 1
+	    f3'    = f3 (head fibL) 0 0 
+        const `seq` f3' `seq` 
+         testeval "packing a list function (2 arg.s, 1 supplied)"
+                  f3' (\f -> take 3 (flt (f 0 (u+const) 0)))
+                  "[10946,17711,28657]"
 
         putStrLn "DONE"
+
+        let n    = max 10 u
+            size = 3*u -- default 120
+            arr :: A.Array Int Int
+            arr  = A.array (0,size-1)
+                   [ (i,i) | i <- [0..size-1] ]
+            output = A.amap (2*) arr
+
+        -- output some of the original elements
+        putStrLn $ show $ take n $ A.elems arr
+
+        testeval "packing an unevaluated array"
+                 output (take n . A.elems)
+                 (show (take n [0,2..]))
 
