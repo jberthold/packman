@@ -109,7 +109,7 @@ import qualified Data.ByteString as B
 import Control.Monad( when )
 
 -- for exceptions thrown by trySerialize
-import qualified Control.Exception as E
+import Control.Exception
   -- Typeable is also required for this
 
 import Control.Concurrent.MVar -- for a global lock
@@ -124,13 +124,13 @@ import Control.Concurrent.MVar -- for a global lock
 -- spec. does not fix it) so this should not be necessary at all...
 -- http://www.haskell.org/ghc/docs/7.6.3/html/users_guide/bugs-and-infelicities.html#haskell-98-2010-undefined
 import Data.Word
-#if x86_64_HOST_ARCH
+#if x86_64_BUILD_ARCH
 type TargetWord = Word64
 hexWordFmt = "0x%016x"
-#elif i386_HOST_ARCH
+#elif i386_BUILD_ARCH
 type TargetWord = Word32
 hexWordFmt = "0x%08x"
-#elif powerpc_HOST_ARCH
+#elif powerpc_BUILD_ARCH
 #error Don't know word size of your Power-PC model
 #else
 #error Don't know the word size on your machine.
@@ -195,14 +195,14 @@ globalLock = unsafePerformIO (newMVar ())
 
 
 withLockHeld :: IO a -> IO a
-withLockHeld = E.bracket_ (takeMVar globalLock) (putMVar globalLock ())
+withLockHeld = bracket_ (takeMVar globalLock) (putMVar globalLock ())
 
 -- | Non-blocking serialisation routine using @'PackException'@s to
 -- signal errors. This version does not block the calling thread when
 -- a black hole is found, but instead signals the condition by the
 -- @'P_BLACKHOLE'@ exception.
 trySerialize :: a -> IO (Serialized a) -- throws PackException (RTS)
-trySerialize x = withLockHeld $ trySer_ x >>= either E.throw return
+trySerialize x = withLockHeld $ trySer_ x >>= either throw return
 
 -- using a helper function
 trySer_ :: a -> IO (Either PackException (Serialized a))
@@ -219,7 +219,7 @@ deser_ :: Serialized a -> IO a  -- throws PackException (garbled)
 deser_ ( Serialized{..} ) 
     = IO $ \s -> case unpack# packetData s of
                    (# s', 0#, x #) -> (# s', x #)
-                   (# s', n#, _ #) -> (# s', E.throw (decodeEx n#) #)
+                   (# s', n#, _ #) -> (# s', throw (decodeEx n#) #)
 
 --------------------------------------------------------
 
@@ -264,7 +264,7 @@ instance Show PackException where
     show P_TypeMismatch   = "Packet data has unexpected type"
 --    show other           = "Packing error. TODO: define strings for more specific cases."
 
-instance E.Exception PackException
+instance Exception PackException
 
 -----------------------------------------------
 -- Show Instance for packets: 
@@ -302,14 +302,14 @@ instance Typeable a => Read (Serialized a)
     -- using ReadP parser (base-4.x), eats
     where readsPrec _ input
            = case parseP input of
-              []  -> E.throw P_ParseError -- no parse
+              []  -> throw P_ParseError -- no parse
               [((sz,tp,dat),r)]
                   -> let !(UArray _ _ _ arr# ) = listArray (0,sz-1) dat
                          t = typeFP (undefined::a)
                      in if t == tp
                               then [(Serialized arr# , r)]
-                              else E.throw P_TypeMismatch
-              other-> E.throw P_ParseError
+                              else throw P_TypeMismatch
+              other-> throw P_ParseError
                        -- ambiguous parse for packet
 
 -- Packet Parser: read header with size and type, then iterate over
@@ -325,7 +325,7 @@ parseP = readP_to_S $
             let sz = read sz_str::Int
             string ", program "
             h  <- munch1 (not . (== '\n'))
-            when (read h /= prgHash) (E.throw P_BinaryMismatch)
+            when (read h /= prgHash) (throw P_BinaryMismatch)
               -- executables do not match. No ambiguous parses here,
               -- so just throw; otherwise we would only pfail.
             newline
@@ -378,11 +378,11 @@ instance Typeable a => Binary (Serialized a) where
              put arr
     get = do hash   <- get :: Get FP
              when (hash /= prgHash) 
-               (E.throw P_BinaryMismatch) 
+               (throw P_BinaryMismatch) 
              -- executables do not match
              tp <- get :: Get FP
              when (tp /= typeFP (undefined :: a))
-               (E.throw P_TypeMismatch)
+               (throw P_TypeMismatch)
                 -- Type error during packet parse
              uarr   <- get :: Get (UArray Int TargetWord)
              let !(UArray _ _ sz bArr#) = uarr
@@ -396,8 +396,8 @@ encodeToFile path x = trySerialize x >>= encodeFile path
 --   exceptions from decoding the file and re-throws @'ParseError'@s
 decodeFromFile :: Typeable a => FilePath -> IO a
 decodeFromFile path = do ser <- (decodeFile path) 
-                                  `E.catch` 
-                                  (\(e::E.ErrorCall) -> E.throw P_ParseError)
+                                  `catch` 
+                                  (\(e::ErrorCall) -> throw P_ParseError)
                          deserialize ser -- exceptions here go through
 
 ----------------------------------------
