@@ -35,10 +35,10 @@
 #define HEADERSIZE sizeof(StgHeader)/sizeof(StgWord)
 
 // some sizes for packed parts of closures
-#define PACK_PLC_SIZE	2	/* Size of a packed PLC in words */
-#define PACK_GA_SIZE	3	/* Size of a packed GA in words */
+#define PACK_PLC_SIZE   2 /* Size of a packed PLC in words */
+#define PACK_GA_SIZE    3 /* Size of a packed GA in words */
 #define PACK_FETCHME_SIZE (PACK_GA_SIZE + HEADERSIZE)
-			        /* Size of a packed fetch-me in words */
+                          /* Size of a packed fetch-me in words */
 
 // markers for packed/unpacked type
 #define PLC     0L
@@ -130,27 +130,27 @@ typedef struct UnpackInfo_ {
     nat pptr;                   // current child pointer
     nat pptrs;                  // no. of pointers
     nat  pvhs;                  // var. hdr. size (offset for filling in ptrs.)
-    StgClosure* graphroot;      // for GC (hard but true: always evacuate the whole
+    StgClosure* graphroot;      // for GC (hard but true: always evacuate whole
                                 // graph, since following message can contain
                                 // offset references
     nat queue_length;
     StgClosure** queue;         // closure queue, variable size
-    nat offsetpadding;          // padding to adjust offset between several packets
-    HashTable* offsets;         // set of offsets, stored in a Hashtable
+    nat offsetpadding;          // padding for offsets between several packets
+    HashTable* offsets;         // Hashtable of offsets
 } UnpackInfo;
 
 /* Future use: global unpack state to support fragmented subgraphs
 static StgClosure* restoreUnpackState(UnpackInfo* unpack,StgClosure** graphroot,
-				      nat* pptr, nat* pptrs, nat* pvhs);
+                                      nat* pptr, nat* pptrs, nat* pvhs);
 static UnpackInfo* saveUnpackState(StgClosure* graphroot, StgClosure* parent,
-				   nat pptr, nat pptrs, nat pvhs);
+                                   nat pptr, nat pptrs, nat pvhs);
 */
 
 // external interface, declared in Parallel.h:
 /*
 StgClosure        *UnpackGraph(pmPackBuffer *packBuffer,
-			       Port inPort,
-			       Capability* cap);
+                               Port inPort,
+                               Capability* cap);
 */
 // internal function working on the raw data (instead of pmPackBuffer)
 StgClosure* pmUnpackGraph_(StgWord *buffer, StgInt size, Capability* cap);
@@ -400,7 +400,7 @@ get_closure_info(StgClosure* node, StgInfoTable* info,
             // NB nonptrs field for array closures is only used in checkPacket
             break;
 
-#if __GLASGOW_HASKELL__ > 708 
+#if __GLASGOW_HASKELL__ > 708
        /* Small arrays do not have card tables, straightforward. */
         case SMALL_MUT_ARR_PTRS_CLEAN:
         case SMALL_MUT_ARR_PTRS_DIRTY:
@@ -746,7 +746,8 @@ pmPackBuffer* pmPackNearbyGraph(StgClosure* closure, StgTSO* tso)
     DonePacking();
 
     IF_DEBUG(prof,
-            debugBelch("** Finished packing graph %p (%s); packed size: %ld; size of graph: %ld\n",
+            debugBelch("** Finished packing graph %p (%s); "
+                       "packed size: %ld; size of graph: %ld\n",
                 closure, info_type(UNTAG_CLOSURE(closure)),
                 (long)globalPackBuffer->size,
                 (long)globalPackBuffer->unpacked_size));;
@@ -823,7 +824,7 @@ loop:
         case CONSTR_NOCAF_STATIC:  // evaluated on each PE if needed
         case FUN_STATIC:
         case THUNK_STATIC:
-            // all these are packed with their tag (closure is still tagged here)
+            // all these are packed with their tag (closure is still tagged)
             IF_DEBUG(sparks,
                     debugBelch("*>~~ Packing a %p (%s) as a PLC\n",
                         closure, info_type_by_ip(info)));
@@ -878,7 +879,7 @@ loop:
 
         case AP:
         case PAP:
-            return PackPAP((StgPAP *)closure); // also handles other stack-containing types
+            return PackPAP((StgPAP *)closure); // types with bitmap-layout
 
         case AP_STACK:
             // this is a stack from an evaluation that was interrupted
@@ -911,34 +912,34 @@ loop:
             goto impossible;
 
         case BLACKHOLE:
-            //  case RBH:
-            {
-                StgClosure* indirectee = ((StgInd*)closure)->indirectee;
+          //  case RBH:
+          {
+            StgClosure* indirectee = ((StgInd*)closure)->indirectee;
 
-                // some Blackholes are actually indirections since ghc-7.0
-                switch (((StgInfoTable*)get_itbl(UNTAG_CLOSURE(indirectee)))->type) {
+            // some Blackholes are actually indirections since ghc-7.0
+            switch (((StgInfoTable*)get_itbl(UNTAG_CLOSURE(indirectee)))->type) {
 
-                    case IND: // race cond. when threaded (blackhole just got updated)
-                        // This case is analogous with the one in StgMiscClosures.cmm
-                        goto loop;
-                    case TSO: // no blocking queue yet. msgBlackHole will create one.
-                    case BLOCKING_QUEUE: // another thread already blocked here. Enqueue
+            case IND: // race cond. when threaded (blackhole just got updated)
+              // This case is analogous with the one in StgMiscClosures.cmm
+              goto loop;
+            case TSO: // no blocking queue yet. msgBlackHole will create one.
+            case BLOCKING_QUEUE: // another thread already blocked here. Enqueue
 
-                        // If a TSO called a primOp, it must be blocked on this BH
-                        // until the BH gets updated/data arrives. On the awakening of
-                        // the BlockingQueue, the PrimOp calls packClosure again.
-                            IF_DEBUG(sparks,
-                                    debugBelch("packing hit a %s at %p, no TSO given (returning).\n",
-                                        info_type_by_ip(info), closure));
-                        return P_BLACKHOLE;
+              // If a TSO called a primOp, it must be blocked on this BH
+              // until the BH gets updated/data arrives. On the awakening of
+              // the BlockingQueue, the PrimOp calls packClosure again.
+              IF_DEBUG(sparks,
+                       debugBelch("packing hit a %s at %p, no TSO given (returning).\n",
+                                  info_type_by_ip(info), closure));
+              return P_BLACKHOLE;
 
-                    default: // an indirection, pack the indirectee (jump back to start)
-                        closure = indirectee;
-                        // this is a new case of "UNWIND_IND", a blackhole which is indeed an
-                        // indirection. Difficult to catch in UNWIND_IND, so jump back here.
-                        goto loop;
-                }
+            default: // an indirection, pack the indirectee (jump back to start)
+              closure = indirectee;
+              // this is a new case of "UNWIND_IND", a blackhole which is indeed an
+              // indirection. Difficult to catch in UNWIND_IND, so jump back here.
+              goto loop;
             }
+          }
 
         case MVAR_CLEAN:
         case MVAR_DIRTY:
@@ -1608,7 +1609,7 @@ StgClosure* pmUnpackGraph_(StgWord *buffer, StgInt size, Capability* cap)
   +--------------------------------------------------------------------+
       <--- *vhsP=2 --->                A
                                        |
-	 *pptrs = N                 *pptr=3
+         *pptrs = N                 *pptr=3
 */
 //@cindex LocateNextParent
 STATIC_INLINE void LocateNextParent(parentP, pptrP, pptrsP, pvhsP)
@@ -1953,7 +1954,7 @@ static StgClosure * UnpackPAP(StgInfoTable *info, StgWord **bufptrP, Capability*
                 "%d args, constructed bitmap %#o.\n",
                 info_type((StgClosure*) pap),pap,
                 args, (int) bitmap));
-    // XXX compare to stored bitmap. 
+    // XXX compare to stored bitmap.
     // XXXXXX why not store the bitmap in the first place?
 
     return (StgClosure*) pap;
@@ -2096,12 +2097,12 @@ STATIC_INLINE  StgClosure *UnpackOffset(StgWord **bufptrP)
 
 static
 StgClosure* restoreUnpackState(UnpackInfo* unpack,StgClosure** graphroot,
-		nat* pptr, nat* pptrs, nat* pvhs) {
+                nat* pptr, nat* pptrs, nat* pvhs) {
   nat size, i;
   StgClosure* parent;
 
   IF_DEBUG(prof,
-	       debugBelch("restore unpack state"));
+           debugBelch("restore unpack state"));
   ASSERT(unpack != NULL);
 
   parent = unpack->parent;
@@ -2124,9 +2125,9 @@ StgClosure* restoreUnpackState(UnpackInfo* unpack,StgClosure** graphroot,
   stgFree(unpack);
 
   IF_DEBUG(prof,
-	       debugBelch("unpack state restored (graphroot: %p, current "
-			  "parent: %p (ptr %d of %d, vhs= %d, offset %d).",
-		     *graphroot, parent, *pptr, *pptrs, *pvhs, offsetpadding));
+           debugBelch("unpack state restored (graphroot: %p, current "
+                      "parent: %p (ptr %d of %d, vhs= %d, offset %d).",
+                      *graphroot, parent, *pptr, *pptrs, *pvhs, offsetpadding));
   return parent;
 }
 
@@ -2142,31 +2143,31 @@ StgClosure** saveQueue(nat* size) {
 
   // queue to save:
   IF_DEBUG(sparks,
-	       debugBelch("saveQueue: saving ");
-	       PrintClosureQueue());
+               debugBelch("saveQueue: saving ");
+               PrintClosureQueue());
   queue = (StgClosure **) stgMallocBytes(*size * sizeof(StgClosure*),
-					 "saveQueue: Queue");
+                                         "saveQueue: Queue");
   memcpy(queue, ClosureQueue+clq_pos, *size * sizeof(StgClosure*));
   IF_DEBUG(sparks,
-	       { nat j;
-	         debugBelch("saveQueue: saved this queue:\n");
-		 for (j = 0; j < *size; j++)
-		   debugBelch("\tClosure %d: %p\n",*size - j,queue[j]);
-	       });
+               { nat j;
+                 debugBelch("saveQueue: saved this queue:\n");
+                 for (j = 0; j < *size; j++)
+                   debugBelch("\tClosure %d: %p\n",*size - j,queue[j]);
+               });
   return queue;
 }
 
 static
 UnpackInfo* saveUnpackState(StgClosure* graphroot, StgClosure* parent,
-			    nat pptr, nat pptrs, nat pvhs) {
+                            nat pptr, nat pptrs, nat pvhs) {
   UnpackInfo* save;
   nat size;
 
   save = stgMallocBytes(sizeof(UnpackInfo),"saveUnpackState: UnpackInfo");
   IF_DEBUG(prof,
-	       debugBelch("saving current unpack state at %p",save);
-	       debugBelch("graphroot: %p, current parent: %p (ptr %d of %d, vhs= %d)",
-		     graphroot, parent, pptr, pptrs, pvhs));
+           debugBelch("saving current unpack state at %p",save);
+           debugBelch("graphroot: %p, current parent: %p (ptr %d of %d, vhs= %d)",
+                      graphroot, parent, pptr, pptrs, pvhs));
   // simple tasks: save numbers
   save->parent = parent;
   save->pptr = pptr;
@@ -2181,10 +2182,10 @@ UnpackInfo* saveUnpackState(StgClosure* graphroot, StgClosure* parent,
   save->offsets = offsetTable;         // hashtable remains allocated
 
   IF_DEBUG(prof,
-	       debugBelch("unpack state saved (offsetpadding %d in "
-			  "hashtable at %p, %d closures in queue at %p).",
-			  save->offsetpadding, save->offsets,
-			  save->queue_length, save->queue));
+           debugBelch("unpack state saved (offsetpadding %d in "
+                      "hashtable at %p, %d closures in queue at %p).",
+                          save->offsetpadding, save->offsets,
+                          save->queue_length, save->queue));
 
   return save;
 }
@@ -2227,7 +2228,8 @@ StgClosure* pmtryPackToMemory(StgClosure* graphroot,
        +---------+----------+------------------------+
        */
     wordArray = (StgArrWords*) allocate(cap, 2 + buffer->size);
-    SET_HDR(wordArray, &stg_ARR_WORDS_info, CCS_SYSTEM); // ccs to be checked!
+                                        // XXX 2 == header size + 1 ?
+    SET_HDR(wordArray, &stg_ARR_WORDS_info, CCS_SYSTEM);
     wordArray->bytes = sizeof(StgWord) * (buffer->size);
     memcpy((void*) &(wordArray->payload),
             (void*) (buffer->buffer),
@@ -2632,7 +2634,7 @@ print:
             {
                 char str[6];
                 sprintf(str,"%ld",(long)((StgSmallMutArrPtrs*)p)->ptrs);
-                strcat(fingerPrintStr,str); 
+                strcat(fingerPrintStr,str);
                 nat i;
                 for (i = 0; i < ((StgSmallMutArrPtrs*)p)->ptrs; i++) {
                     //contains closures... follow
@@ -2793,4 +2795,3 @@ void pmcheckPacket(pmPackBuffer *packBuffer)
 
 /* END OF DEBUG */
 #endif
-
