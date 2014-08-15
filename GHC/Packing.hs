@@ -86,7 +86,10 @@ import GHC.Exts ( Int(..))
 import Data.Word( Word, Word64, Word32 )
 import Data.Array.Base ( UArray(..), elems, listArray )
 import Foreign.Storable ( sizeOf )
--- import GHC.Constants(TargetWord) would be nice...but is gone
+
+-- using mutable byte arrays as buffer (passed to the primitive)
+import Control.Monad.Primitive
+import Data.Primitive.ByteArray
 
 -- Read and Show instances
 import Text.Printf ( printf )
@@ -112,8 +115,6 @@ import Control.Monad( when )
 import Control.Exception
   -- Typeable is also required for this
 
-import Control.Concurrent.MVar -- for a global lock
-
 ----------------------------------------------
 
 -- replacement for the old GHC.Constants.TargetWord. This is a cheap
@@ -135,9 +136,6 @@ hexWordFmt = "0x%08x"
 #else
 #error Don't know the word size on your machine.
 #endif
-
-foreign import prim "stg_tryPack" tryPack# :: Any -> State# s -> (# State# s, Int#, ByteArray# #)
-foreign import prim "stg_unpack" unpack# :: ByteArray# -> State# s -> (# State# s, Int#, a #)
 
 -----------------------------------------------
 -- Helper functions to compare types at runtime:
@@ -186,40 +184,71 @@ prgHash = unsafePerformIO $
 -- but only when /externalising/ data (writing to disk, for instance).
 data Serialized a = Serialized { packetData :: ByteArray# }
 
--- serialisation and deserialisation code are not thread-safe and need
--- exclusive access (for now). This CAF-based solution is fragile but
--- at least easily portable. Essential: should never be inlined!
-{-# NOINLINE globalLock #-}
-globalLock :: MVar ()
-globalLock = unsafePerformIO (newMVar ())
-
-
-withLockHeld :: IO a -> IO a
-withLockHeld = bracket_ (takeMVar globalLock) (putMVar globalLock ())
-
 -- | Non-blocking serialisation routine using @'PackException'@s to
 -- signal errors. This version does not block the calling thread when
 -- a black hole is found, but instead signals the condition by the
 -- @'P_BLACKHOLE'@ exception.
 trySerialize :: a -> IO (Serialized a) -- throws PackException (RTS)
-trySerialize x = withLockHeld $ trySer_ x >>= either throw return
+trySerialize x = trySerializeWith x defaultBufSize
 
--- using a helper function
-trySer_ :: a -> IO (Either PackException (Serialized a))
-trySer_ x = IO (\s -> case tryPack# (unsafeCoerce# x :: Any) s of
-                        (# s', 0#, bArr# #) -> (# s', Right (Serialized { packetData=bArr# }) #)
-                        (# s', n#, _ #)     -> (# s', Left (decodeEx n# ) #)
-               )
+-- | A default buffer size, used when using the old API
+defaultBufSize :: Int
+defaultBufSize = 10 * 2^20 -- 10 MB
+
+-- | Extended interface function. Allocates buffer of given size, serializes
+-- data into it, then truncates buffer to required size and returns
+-- serialized data
+trySerializeWith :: a -> Int -> IO (Serialized a) -- using instance PrimMonad IO
+trySerializeWith dat bufsize
+    = do buf <- newByteArray bufsize
+         size <- trySerializeInto buf dat
+         buf' <- truncate' buf size
+         ByteArray b# <- unsafeFreezeByteArray buf'
+         return (Serialized { packetData = b# })
+
+-- | core routine. Packs x into mutable byte array buf, returns size
+-- of packed x in buf
+trySerializeInto :: MutableByteArray RealWorld -> a -> IO Int
+trySerializeInto (MutableByteArray buf# ) x 
+    = primitive (tryPack (unsafeCoerce# x :: Any) buf# )
+
+-- | calls primitive, decodes/throws errors + wraps Int# size into Int
+tryPack :: Any -> MutableByteArray# s
+        -> State# s -> (# State# s , Int #)
+tryPack x# buf# s = case tryPack# x# buf# s of
+                      (# s', 0#, size# #) -> (# s', I# size# #)
+                      (# s', e#,   0#  #) -> (# s', throw (decodeEx e#) #)
+
+-- | serialisation primitive, implemented in C. Returns: a
+-- status/error code and size used inside the array
+foreign import prim "stg_tryPack" tryPack#
+    :: Any -> MutableByteArray# s -> State# s -> (# State# s, Int#, Int# #)
+
+-- no in-place truncate operation for MutableByteArrays...
+truncate :: MutableByteArray s -> Int -> IO ()
+truncate b size = error "in-place truncate not available" 
+-- so we fake one
+truncate' :: PrimMonad m => MutableByteArray (PrimState m) -> Int -> m (MutableByteArray (PrimState m))
+truncate' b size 
+    = if sizeofMutableByteArray b < size
+      then throw P_NOBUFFER -- XXX other error?
+      else do b' <- newByteArray size
+              copyMutableByteArray b' 0 b 0 size
+              return b'
+
+--------------------------------------------------------
 
 -- | Deserialisation function. May throw @'PackException'@ @'P_GARBLED'@
 deserialize :: Serialized a -> IO a
-deserialize = withLockHeld . deser_
+deserialize Serialized{..} = primitive (deser packetData)
 
-deser_ :: Serialized a -> IO a  -- throws PackException (garbled)
-deser_ ( Serialized{..} ) 
-    = IO $ \s -> case unpack# packetData s of
-                   (# s', 0#, x #) -> (# s', x #)
-                   (# s', n#, _ #) -> (# s', throw (decodeEx n#) #)
+deser :: ByteArray# -> State# s -> (# State# s, a #)
+deser buf s = case unpack# buf s of
+                (# s', 0#, x #) -> (# s', x #)
+                (# s', n#, _ #) -> (# s', throw (decodeEx n#) #)
+
+foreign import prim "stg_unpack" unpack# :: ByteArray# -> State# s -> (# State# s, Int#, a #)
+
 
 --------------------------------------------------------
 
@@ -254,7 +283,7 @@ decodeEx i#  = error $ "Error value " ++ show (I# i#) ++ " not defined!"
 instance Show PackException where
     show P_SUCCESS = "No error." -- we do not expect to see this
     show P_BLACKHOLE     = "Packing hit a blackhole"
-    show P_NOBUFFER      = "Buffer too small (RTS buffer can be increased with -qQ<size>)"
+    show P_NOBUFFER      = "Pack buffer too small"
     show P_CANNOT_PACK   = "Data contain a closure that cannot be packed (MVar, TVar)"
     show P_UNSUPPORTED   = "Contains an unsupported closure type (whose implementation is missing)"
     show P_IMPOSSIBLE    = "An impossible case happened (stack frame, message). This is probably a bug."

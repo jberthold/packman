@@ -12,6 +12,7 @@ extra-source-files:  cbits/Wrapper.cmm
                      cbits/Pack.c
                      cbits/Errors.h
                      cbits/Types.h
+                     cbits/GHCFunctions.h
                      pack.old
 
 flag Debug
@@ -26,9 +27,10 @@ library
                      ghc-prim >= 0.3,
                      array >= 0.5,
                      binary >= 0.7,
-                     bytestring >= 0.10
+                     bytestring >= 0.10,
+                     primitive >= 0.5
   if flag(debug)
-    ghc-options:     -debug -optc-DDEBUG
+    ghc-options:     -debug -optc-DDEBUG -optc-g
 
   c-sources:         cbits/Wrapper.cmm
                      cbits/Pack.c
@@ -46,10 +48,11 @@ test-suite simpletest
                      array >= 0.5,
                      binary >= 0.7,
                      bytestring >= 0.10,
+                     primitive >= 0.5,
                      packman
   default-language:  Haskell2010
   if flag(debug)
-    ghc-options:     -debug
+    ghc-options:     -debug -optc-g -optc-DDEBUG
 
 test-suite testexceptions
   type:              exitcode-stdio-1.0
@@ -60,11 +63,12 @@ test-suite testexceptions
                      array >= 0.5,
                      binary >= 0.7,
                      bytestring >= 0.10,
+                     primitive >= 0.5,
                      Cabal >= 1.18,
                      packman
   default-language:  Haskell2010
   if flag(debug)
-    ghc-options:     -debug
+    ghc-options:     -debug -optc-g -optc-DDEBUG
 
 -- test-suite alltests DOZNWOK!
 --   type:              detailed-0.9
@@ -75,11 +79,12 @@ test-suite testexceptions
 --                      array >= 0.5,
 --                      binary >= 0.7,
 --                      bytestring >= 0.10,
+--                      primitive >= 0.5,
 --                      Cabal >= 1.18,
 --                      packman
 --   default-language:  Haskell2010
 --   if flag(debug)
---     ghc-options:     -debug
+--     ghc-options:     -debug -optc-g -optc-DDEBUG
 
 source-repository head
   type:     git
