@@ -224,10 +224,11 @@ tryPack x# buf# s = case tryPack# x# buf# s of
 foreign import prim "stg_tryPack" tryPack#
     :: Any -> MutableByteArray# s -> State# s -> (# State# s, Int#, Int# #)
 
--- no in-place truncate operation for MutableByteArrays...
-truncate :: MutableByteArray s -> Int -> IO ()
-truncate b size = error "in-place truncate not available" 
--- so we fake one
+-- GHC-7.8 does not have an in-place shrink operation for MutableByteArrays
+-- (added in GHC-7.9 on August 16, 2014)
+-- GHC-7.9, August 2014 :: MutableByteArray# s -> Int# -> State# s -> State# s
+-- with this one available, tryPack could do the work
+-- for GHC-7.8, we copy
 truncate' :: PrimMonad m => MutableByteArray (PrimState m) -> Int -> m (MutableByteArray (PrimState m))
 truncate' b size 
     = if sizeofMutableByteArray b < size
