@@ -1758,8 +1758,8 @@ static StgClosure * UnpackPAP(ClosureQ *queue, StgInfoTable *info,
         return (StgClosure*) NULL;
     }
     IF_DEBUG(sparks,
-            debugBelch("allocating %d heap words for a PAP (%d args)\n",
-                       size,  n_args));
+             debugBelch("allocating %d heap words for a PAP (%d args)\n",
+                        size,  n_args));
     pap = (StgPtr) allocate(cap, size);
 
     // fill in info ptr (extracted and given as argument by caller)
