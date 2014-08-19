@@ -34,9 +34,11 @@
 #define HEADERSIZE sizeof(StgHeader)/sizeof(StgWord)
 
 // markers for packed/unpacked type
-#define PLC     0L
-#define OFFSET  1L
-#define CLOSURE 2L
+#define PLC     1L
+#define OFFSET  2L
+#define CLOSURE 3L
+// marker for small bitmap in PAP packing
+#define SMALL_BITMAP_TAG (~0L)
 
 /* Tagging macros will work for any word-sized type, not only
   closures. In the packet, we tag info pointers instead of
@@ -342,7 +344,7 @@ STATIC_INLINE StgClosure* unwindInd(StgClosure *closure)
     StgClosure *start = closure;
 
     while (closure_IND(start))
-        start = ((StgInd*) UNTAG_CLOSURE(start))->indirectee;
+        start = (UNTAG_CAST(StgInd*, start))->indirectee;
 
     return start;
 }
@@ -403,10 +405,11 @@ getClosureInfo(StgClosure* node, StgInfoTable* info,
 
     case AP_STACK:
     case AP:
+        // thunk header and arity/args field
         *vhs = sizeofW(StgThunkHeader) - sizeofW(StgHeader) + 1;
         *ptrs = 1;
         // wrong (some are ptrs), but not used in the unpacking code!
-        *nonptrs = *size - *vhs - 1;
+        *nonptrs = *size - 2 - sizeofW(StgThunkHeader);
         break;
 
         /* For Word arrays, no pointers need to be filled in.
@@ -947,11 +950,237 @@ static StgWord PackGeneric(PackState* p, StgClosure* closure)
     return P_SUCCESS;
 }
 
-// unfinished
+// Packing PAPs and APs:
+
+// a PAP (partial application) represents a function which has been
+// given too few arguments for complete evaluation (thereby defining a
+// new function with fewer arguments).
+//
+// PAP/AP closure layout in GHC (see Closures.h, InfoTables.h):
+//   +--------------------------------------------------------------+
+//   | Header | (arity | n_args) | Function | Stack.|Stack.|Stack...|
+//   +--------------------------------------------------------------+
+//                                     |
+//                   (info table has bitmap for stack)
+//
+// The _arity_ of the PAP informs about how many arguments are still
+// missing to saturate the function call. n_args, in turn, is how many
+// arguments are already present (i.e. the stack size).
+//
+// An APs (generic application) has similar layout, but actually has
+// all its arguments, i.e. the application has not been evaluated to
+// WNHF yet. Therefore, APs have a thunk header (one extra word).
+//
+//  PAPs/APs are packed by packing the function and the argument stack,
+// where both can point to static or dynamic (heap-allocated) closures
+// which must be packed later, and enqueued here.
+// The stack may contain either pointers or non-pointer words, indicated
+// by a _bitmap_ that comes with the function (but is only used up to the
+// indicated n_args size).
+// Old code used tags on all stored values (doubling the stack size),
+// this version packs the btimap instead.
 static StgWord PackPAP(PackState *p, StgPAP *pap) {
-    // XXX revise PAP packing
-    if (pap != 0) return P_UNSUPPORTED;
-    return P_CANNOTPACK;
+
+    nat i;
+    nat hsize;          // header size
+    StgWord bitmap;     // small bitmap
+    StgLargeBitmap *lbm;// large bitmap
+    nat bsize;          // bitmap size
+    nat bsizeW;         // bitmap size in words
+    StgFunInfoTable *funInfo; // to get bitmap
+
+    nat n_args;         // arg. count on stack
+    StgClosure *fun;    // function in PAP/AP
+    StgPtr ptr;         // stack object currently packed
+    StgWord tag = 0;
+
+    tag = GET_CLOSURE_TAG((StgClosure*) pap);
+    pap = UNTAG_CAST(StgPAP*, (StgClosure*) pap);
+
+    ASSERT(LOOKS_LIKE_CLOSURE_PTR(pap));
+    ASSERT(get_itbl((StgClosure*)pap)->type == PAP ||
+            get_itbl((StgClosure*)pap)->type == AP);
+
+    switch (get_itbl((StgClosure*)pap)->type) {
+    case PAP:
+        n_args = pap->n_args;
+        hsize  = HEADERSIZE+1;
+        fun    = pap->fun;
+        break;
+
+    case AP:
+            n_args = ((StgAP*) pap)->n_args;
+            hsize  = sizeofW(StgThunkHeader)+1;
+            fun    = ((StgAP*) pap)->fun;
+            break;
+
+    default: // checked in packClosure, should not happen here
+        barf("PackPAP: strange info pointer, type %d ",
+             get_itbl((StgClosure*)pap)->type);
+    }
+
+    IF_DEBUG(sparks, {
+            debugBelch("Packing %s closure @ %p,"
+                       "with stack of size %d\n",
+                       info_type((StgClosure*) pap), pap, n_args);
+        });
+
+    // Extract the bitmap from the function.
+    // Bitmaps can be either small (1 StgWord) or large
+    // (StgLargeBitmap, see InfoTables.h) with a size field and
+    // multiple bitmap fields.
+    // Note that only the bits up to n_args are used in the packing code,
+    // therefore the packed bitmap is not necessarily the complete one.
+    //
+    // small bitmap:
+    // (32 bit StgWord) [ bits 5-31: bitmap | bits 0-4: size ]
+    // (64 bit StgWord) [ bits 5-63: bitmap | bits 0-5: size ]
+    //                          <--reading--|
+    //
+    // note that reading direction for bitmaps is right-to-left per
+    // StgWord (but left-to-right in the large for large bitmaps)
+    // see rts/sm/Scav.c::scavenge_(small|large)_bitmap
+
+    lbm = (StgLargeBitmap*) NULL;
+    funInfo = get_fun_itbl(UNTAG_CLOSURE(fun));
+    switch (funInfo->f.fun_type) {
+
+        // these two use a large bitmap.
+        case ARG_GEN_BIG:
+            errorBelch("PackPAP at %p: large bitmap not implemented",
+                       pap);
+            return P_UNSUPPORTED;
+            // lbm set indicates a large bitmap (bad if all non-pointers! :-)
+            lbm   = GET_FUN_LARGE_BITMAP(funInfo);
+            bsizeW = lbm->size / BITS_IN(StgWord);
+            break;
+        case ARG_BCO:
+            errorBelch("PackPAP at %p: large bitmap not implemented",
+                       pap);
+            return P_UNSUPPORTED;
+            // lbm indicates large bitmap. BCO macro needs fun ptr, not info
+            lbm   = BCO_BITMAP(fun);
+            bsizeW = lbm->size / BITS_IN(StgWord);
+            break;
+
+        // another clever solution: fields in info table different for
+        // some cases... and referring to autogenerated constants (Apply.h)
+        case ARG_GEN:
+            bitmap = funInfo->f.b.bitmap;
+            bsizeW  = 1;
+            break;
+
+        default:
+            bitmap = stg_arg_bitmaps[funInfo->f.fun_type];
+            bsizeW  = 1;
+    }
+
+
+    // check that we have enough space... upper bound on required size:
+    //         header + arg.s (all non-ptrs) + bitmap and its tag
+    if (!roomToPack(p, hsize + n_args + 1 + bsizeW))
+        return P_NOBUFFER;
+
+    // XXX unpacked_size += hsize + 1 + n_args; // == closure_size(pap)
+
+    // register closure
+    registerOffset(p, (StgClosure*) pap);
+
+    // do the actual packing!
+    // PAP layout in pack buffer
+    //   +---------------------------....................---------------------+
+    //   | Header | (arity | n_args) | bsizeW | bitmap.. | nonPtr | nonPtr|...|
+    //   +---------------------------....................---------------------+
+    // Function field and pointers on stack are not packed but enqueued. In
+    // turn, the packet contains the bitmap, together with its size (or value
+    // 0xFF..FF to tag a small bitmap)
+
+    // pack closure marker
+    Pack(p, (StgWord) CLOSURE);
+
+    // pack header. First word (infoptr) is tagged and offset
+    Pack(p, (StgWord) (P_OFFSET(TAG_CLOSURE(tag, (StgClosure*) *((StgPtr) pap
+                                                                 )))));
+    // rest of header packed as-is (possibly padding, then arity|n_args)
+    for(i = 1; i < hsize; i++) {
+        Pack(p, (StgWord) *(((StgWord*)pap)+i));
+    }
+
+    // queue the function closure for later packing
+    queueClosure(p->queue, fun);
+
+    // pack the bitmap
+    // the bitmap is preceded by a tag, SMALL_BITMAP_TAG == ~0L for a small one,
+    // its size in bits for a large bitmap.
+
+    // Then we pack the bitmap itself.
+    // Note that packing only n_args/BITS_IN(StgWord) bits would do, only those
+    // bits are actually used in the packing/unpacking code). However, we do not
+    // save much, and the case is very rare anyway.
+    if ( lbm == NULL ) {
+        // small bitmap, tag and pack it
+        // SMALL_BITMAP_TAG is ~0L, a very unlikely size
+        Pack(p, SMALL_BITMAP_TAG);
+        Pack(p, bitmap);
+    } else {
+        // large bitmap, a lot of gymnastics
+        IF_DEBUG(sparks,
+                 debugBelch("yuck, large bitmap"));
+        return P_UNSUPPORTED; // XXX following code is an unchecked draft
+        // use size as tag for large bitmap (see above, ~0L is unlikely size)
+        Pack(p, bsizeW);
+        // for (i=0; i * BITS_IN(StgWord) < n_args; i++) { // meeh, we pack all
+        for (i=0; i < bsizeW; i++) {
+            Pack(p, lbm->bitmap[i]);
+        }
+    }
+
+    // now walk the stack, packing non-pointers and enqueueing pointers, as
+    // indicated by bitmap, see Scav.c::scavenge_(small|large)_bitmap (which
+    // only evacuates pointers)
+
+    // ptr = first word of payload (PAP/AP cases separated above)
+    if (lbm == NULL) {
+        bsize = BITMAP_SIZE(bitmap);
+        bitmap = BITMAP_BITS(bitmap);
+        while (bsize > 0) {
+            if (bitmap & 1) {
+                // bit set => non-pointer, pack
+                Pack(p, *ptr);
+            } else {
+                // bit not set => pointer
+                queueClosure(p->queue, (StgClosure*) *ptr);
+                // XXX unpacked_size += sizeofW(StgInd); // unpacking creates IND
+            }
+            ptr++;
+            bitmap = bitmap >> 1;
+            bsize--;
+        }
+    } else {
+        debugBelch("yuck, large bitmap again");
+        return P_UNSUPPORTED;
+        // XXX following code UNCHECKED!
+        // written to closely match Scav.c::scavenge_large_bitmap
+        nat j, b;
+        b = 0;
+        bsize = lbm->size;
+        for(i = 0; i < bsize; b++) {
+            bitmap = lbm->bitmap[b];
+            j = stg_min(bsize-i, BITS_IN(StgWord));
+            i += j;
+            for (; j > 0; j--, ptr++) {
+                if (bitmap & 1) { // bit set => non-pointer
+                    Pack(p, *ptr);
+                } else { // bit not set => pointer
+                    queueClosure(p->queue, (StgClosure*) *ptr);
+                    // XXX unpacked_size += sizeofW(StgInd); // unpacking creates IND
+                }
+                bitmap = bitmap >> 1;
+            }
+        }
+    }
+
+    return P_SUCCESS;
 }
 
 // Packing Arrays.
@@ -1483,9 +1712,145 @@ STATIC_INLINE  StgClosure *UnpackPLC(StgWord **bufptrP) {
 // unpacking PAPs (and other bitmap layout). Returns NULL in case of errors
 static StgClosure * UnpackPAP(ClosureQ *queue, StgInfoTable *info,
                               StgWord **bufptrP, Capability* cap) {
-    // XXX revise PAP packing
-    if (queue == NULL) return (StgClosure*) queue;
-    return NULL;
+
+    nat n_args, size, bsize, bsizeW, hsize, i;
+    StgPtr pap; // PAP/AP is constructed here, but untyped (would need
+                // to distinguish the AP case all the time)
+
+    // PAP layout in pack buffer
+    //   +---------------------------....................---------------------+
+    //   | Header | (arity | n_args) | bsizeW | bitmap.. | nonPtr | nonPtr|...|
+    //   +---------------------------....................---------------------+
+    //
+    // The bitmap indicating pointers on the stack is packed after the header.
+    // For large bitmaps, their size in words is stored in the buffer; small
+    // bitmaps are indicated by a size of 0xFF..FF (SMALL_BITMAP_TAG).
+    //
+    // In the heap, there will be a function field instead of this bitmap, and
+    // the payload (stack) will have pointers interspersed with the packed
+    // nonptrs.
+    // The function field is filled in the usual way (as if a PAP was
+    // "ptrs-first"), the stack will be constructed with pointers to new
+    // indirections filled later.
+
+    // Unpacking should result in the following layout in the heap:
+    // +----------------------------------------------------------------+
+    // | Header | (arity , n_args) | Fct. | Arg/&Ind1 | Arg/&Ind2 | ... |
+    // +----------------------------------------------------------------+
+    // followed by <= n_args indirections pointed at from the stack
+
+    // calc./alloc. needed closure space in the heap, using common macros.
+    switch (INFO_PTR_TO_STRUCT(info)->type) {
+    case PAP:
+        hsize = HEADERSIZE + 1;
+        n_args  = ((StgPAP*) *bufptrP)->n_args;
+        size  = PAP_sizeW(n_args);
+        break;
+    case AP:
+        hsize = sizeofW(StgThunkHeader) + 1;
+        n_args  = ((StgAP*)  *bufptrP)->n_args;
+        size  = AP_sizeW(n_args);
+        break;
+    default:
+        IF_DEBUG(prof,
+                 errorBelch("UnpackPAP: strange info pointer, type %d ",
+                            INFO_PTR_TO_STRUCT(info)->type));
+        return (StgClosure*) NULL;
+    }
+    IF_DEBUG(sparks,
+            debugBelch("allocating %d heap words for a PAP (%d args)\n",
+                       size,  n_args));
+    pap = (StgPtr) allocate(cap, size);
+
+    // fill in info ptr (extracted and given as argument by caller)
+    pap[0] = (StgWord) info;
+    (*bufptrP)++;
+
+    // fill in header fields (includes ( arity | n_args ) )
+    for(i = 1; i < hsize; i++) {
+        pap[i] = (StgWord) *(*bufptrP)++;
+    }
+    // enqueue to get function field filled (see getClosureInfo)
+    queueClosure(queue, (StgClosure*) pap);
+    // zero the function field
+    pap[hsize] = (StgWord) NULL;
+
+    // read bitmap size and bitmap
+    bsizeW = (nat) *(*bufptrP)++;
+
+    // unpack the stack (size == args), starting at pap[hsize]
+    // make room for fct. pointer, thus start at hsize+1
+
+    if (bsizeW == SMALL_BITMAP_TAG) {
+        StgWord bitmap;
+        // small bitmap, just read it and unpack accordingly
+        bitmap = (StgWord)  *(*bufptrP)++;
+
+        // bitmap size irrelevant here, but should be >= n_args
+        ASSERT(n_args <= BITMAP_SIZE(bitmap));
+        bitmap = BITMAP_BITS(bitmap);
+        for (i = hsize + 1; i < hsize + n_args; i++, bitmap >>= 1) {
+            if (bitmap & 1) {
+                // non-pointer, just unpack it
+                pap[i] = (StgWord) *(*bufptrP)++;
+            } else {
+                // pointer: create and enqueue a new indirection, store a
+                // pointer to it on the stack
+                StgInd *ind;
+                // allocate a new closure
+                ind = (StgInd*) allocate(cap, sizeofW(StgInd));
+                SET_HDR(ind, &stg_IND_info, CCS_SYSTEM); // set ccs
+                // zero the indirectee field (should be filled later)
+                ind->indirectee = (StgClosure*) NULL;
+                // store a pointer
+                pap[i] = (StgWord) ind;
+                queueClosure(queue, (StgClosure*) ind);
+            }
+            bitmap >>= 1;
+        }
+
+    } else {
+        debugBelch("yuck, unpacking large bitmap");
+        return (StgClosure*) NULL;
+        // need to repeatedly read a new bitmap and proceed
+        StgPtr bitmapPos;
+        nat j;
+        StgWord bitmap;
+
+        // ... walk through the bitmap until n_args have been unpacked
+        bitmapPos = *bufptrP;
+        bitmap    = *bitmapPos;
+        j = BITS_IN(StgWord);
+        for (i = hsize + 1; i < hsize + n_args; i++) {
+            if (bitmap & 1) {
+                // non-pointer, just unpack it
+                pap[i] = (StgWord) *(*bufptrP)++;
+            } else {
+                // pointer: create and enqueue a new indirection, store a
+                // pointer to it on the stack
+                StgInd *ind;
+                // allocate a new closure
+                ind = (StgInd*) allocate(cap, sizeofW(StgInd));
+                SET_HDR(ind, &stg_IND_info, CCS_SYSTEM); // set ccs
+                // zero the indirectee field (should be filled later)
+                ind->indirectee = (StgClosure*) NULL;
+                // store a pointer
+                pap[i] = (StgWord) ind;
+                queueClosure(queue, (StgClosure*) ind);
+            }
+            // advance into next part of bitmap when current one done
+            j--;
+            if (j == 0) {
+                bitmapPos++;
+                bitmap = *bitmapPos;
+                j = BITS_IN(StgWord);
+            } else {
+                bitmap >>= 1;
+            }
+        }
+    }
+
+    return (StgClosure*) pap;
 }
 
 // unpacking arrays. Returns NULL in case of errors.
