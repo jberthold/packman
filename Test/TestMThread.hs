@@ -65,10 +65,10 @@ main
                    -- function will retry in this program)
                    forkIO (do testeval (show i)
                                        (cycle fibL) (!!i)
-                                       (show (fibL!!(i `mod` u)))
+                                       (show (fibL!!(i `mod` length fibL)))
                               putMVar v ())
                    return v
-        vs <- mapM doThread [1..n]
+        vs <- mapM doThread [0..n-1]
 
         putStrLn "forked, waiting"
         mapM_ takeMVar vs
