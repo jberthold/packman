@@ -28,12 +28,6 @@ extern void  freeHashTable(HashTable *table, void (*freeDataFun)(void *));
 extern void *stgMallocBytes(int n, char *msg) GNUC3_ATTRIBUTE(__malloc__);
 extern void  stgFree(void* p);
 
-// a fixed reference point when using relocatable binaries, to offset
-// info pointers and plc pointers.
-//  See "relocatable binaries" before "PackNearbyGraph" routine for use.
-#define BASE_SYM ZCMain_main_info // base symbol for offset
-extern const StgInfoTable BASE_SYM[];
-
 #ifdef DEBUG
 extern void checkClosure(StgClosure*);
 #endif

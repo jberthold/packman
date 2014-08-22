@@ -37,7 +37,9 @@ library
   include-dirs:      cbits
   default-language:  Haskell2010
   if flag(debug)
-    cc-options:      -g -DDEBUG
+    cc-options:      -g -DDEBUG -DLIBRARY_CODE
+  else
+    cc-options:      -DLIBRARY_CODE
 
 test-suite simpletest
   type:              exitcode-stdio-1.0

@@ -14,7 +14,12 @@
    This file: a heavily revised version which uses a thread-local
    internal pack state to make the code thread-safe.
 
+   Code is shared between the library and the parallel RTS. Library code is
+   separated by PP symbol LIBRARY_CODE (code without it is shared or in-RTS).
+
 */
+
+#ifdef LIBRARY_CODE
 
 #include <Rts.h>
 #include <string.h>
@@ -23,11 +28,46 @@
 #include "Errors.h"
 #include "GHCFunctions.h"
 
+#else
+
+// in-RTS version uses different includes
+#include "Rts.h"
+#include "RtsUtils.h"
+#include "Hash.h"
+#include "Threads.h" // updateThunk
+#include "Messages.h" // messageBlackHole
+
+# if defined(DEBUG)
+# include "sm/Sanity.h"
+# endif
+
+#include "Printer.h" // printing closure info (also non-debug-enabled)
+
+#include <string.h> // memset
+#endif
+
 #ifdef DEBUG
 #define DBG_HEADROOM 1
 #define END_OF_BUFFER_MARKER 0xdededeee
 #else
 #define DBG_HEADROOM 0
+#endif
+
+// debugging macros for library and in-RTS version
+#ifdef LIBRARY_CODE
+// for the library version, borrow flags "scheduler" and "sparks"
+# define PACKDEBUG(s) IF_DEBUG(scheduler, s)
+# define PACKETDEBUG(s) IF_DEBUG(sparks, s)
+#else
+// for the in-RTS version, use the usual macros
+// XXX maybe drop support for the non-parallel in-RTS version
+# ifdef PARALLEL_RTS
+#  define PACKDEBUG(s) IF_PAR_DEBUG(pack, s)
+#  define PACKETDEBUG(s) IF_PAR_DEBUG(packet, s)
+# else
+#  define PACKDEBUG(s) IF_DEBUG(scheduler, s)
+#  define PACKETDEBUG(s) /* nothing */
+# endif
 #endif
 
 // size of the (fixed) Closure header in words
@@ -49,6 +89,12 @@
 
 // Info pointer <--> Info offset (also for PLC pointers)
 // See "relocatable binaries" before "PackNearbyGraph" routine for use.
+
+// a fixed reference point when using relocatable binaries, to offset
+// info pointers and plc pointers.
+//  See "relocatable binaries" before "PackNearbyGraph" routine for use.
+#define BASE_SYM ZCMain_main_info // base symbol for offset
+extern const StgInfoTable BASE_SYM[];
 
 // use this one on info pointers before they go into a packet
 #define P_OFFSET(ip) ((StgWord) ((StgWord) (ip)) - (StgWord) BASE_SYM)
@@ -73,9 +119,13 @@ typedef struct ClosureQ_ {
 
 // packing state: buffer, queue, offset table
 typedef struct PackState_ {
-    StgWord*  buffer;
+    StgWord  *buffer;
     nat       size;     // buffer size in StgWords
     nat       position; // position in buffer, in StgWords
+    // nat unpacked_size;  // record unpacked size? only interesting to debug
+#ifndef LIBRARY_CODE
+    StgTSO *tso;        // in-RTS version: may block when accessing a blackhole
+#endif
     ClosureQ  *queue;
     HashTable *offsets;
 } PackState;
@@ -83,10 +133,14 @@ typedef struct PackState_ {
 // forward declarations
 
 // Init module at startup
-static void pmInit(void) __attribute__((constructor));
+static void init(void) __attribute__((constructor));
 
 // init/destruct pack data structure
+#ifdef LIBRARY_CODE
 static PackState* initPacking(StgArrWords *mutArr);
+#else
+static PackState* initRtsPacking(StgWord *buffer, nat size, StgTSO *tso);
+#endif
 static void donePacking(PackState *state);
 
 // closure queue
@@ -97,20 +151,39 @@ STATIC_INLINE nat queueSize(ClosureQ* q);
 static void queueClosure(ClosureQ* q, StgClosure *closure);
 static StgClosure *deQueueClosure(ClosureQ* q);
 
-// packing
+/***************************************************************
+ *  packing
+ */
 
 // little helpers:
 STATIC_INLINE void registerOffset(PackState* p, StgClosure *closure);
 STATIC_INLINE StgWord offsetFor(PackState* p, StgClosure *closure);
 STATIC_INLINE rtsBool roomToPack(PackState* p, nat size);
 
-STATIC_INLINE rtsBool isBlackhole(StgClosure* node);
+// closure information
 STATIC_INLINE StgInfoTable* getClosureInfo(StgClosure* node, StgInfoTable* info,
                                            nat *size, nat *ptrs,
                                            nat *nonptrs, nat *vhs);
+#ifdef LIBRARY_CODE
+// remains local when code is stand-alone for the library
+STATIC_INLINE rtsBool isBlackhole(StgClosure* node);
+#else
+// if compiling for the RTS: used in other files, declared in Parallel.h
+// rtsBool isBlackhole(StgClosure* node);
+#endif
 
-// interface function used in foreign primop
+/************************
+ *  interface for packing
+ */
+#ifdef LIBRARY_CODE
+// interface function used in foreign primop: pack graph to given array, return
+// size in bytes (offset by P_ERRCODEMAX) or an error code
 int pmtryPackToBuffer(StgClosure* closure, StgArrWords* mutArr);
+#else
+// in-RTS version: packToBuffer, declared in Parallel.h
+// int packToBuffer(StgClosure* closure,
+//                  StgWord *buffer, nat bufsize, StgTSO *caller);
+#endif
 
 // packing static addresses and offsets
 STATIC_INLINE void PackPLC(PackState* p, StgPtr addr);
@@ -118,7 +191,7 @@ STATIC_INLINE void PackOffset(PackState* p, StgWord offset);
 // packing routine, branches into special cases
 static StgWord packClosure(PackState* p, StgClosure *closure);
 
-// low-level packing: fill one StgWord of data into the globalPackBuffer
+// low-level packing: fill one StgWord of data into the buffer
 STATIC_INLINE void Pack(PackState* p, StgWord data);
 
 // the workhorses: generic heap-alloc'ed (ptrs-first) closure
@@ -127,11 +200,23 @@ static StgWord PackGeneric(PackState* p, StgClosure *closure);
 static StgWord PackPAP(PackState* p, StgPAP *pap);
 static StgWord PackArray(PackState* p, StgClosure* array);
 
-// unpacking
+/***************************************************************
+ * unpacking
+ */
 
+/**************************
+ *  interface for unpacking
+ */
+#ifdef LIBRARY_CODE
 // interface unpacking from a Haskell array (using the Haskell Byte Array)
 // may return error code P_GARBLED
 StgClosure* pmUnpackGraphWrapper(StgArrWords* packBufferArray, Capability* cap);
+#else
+// in-RTS unpacking: unpacks from rtsPackBuffer and wipes it, aborts on failure
+// declared in Parallel.h
+// StgClosure* unpackGraph(rtsPackBuffer *packBuffer, Capability* cap);
+// StgClosure* unpackGraphWrapper(StgArrWords* packBufferArray, Capability* cap);
+#endif
 
 // internal function working on the raw data buffer
 static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap);
@@ -153,6 +238,36 @@ static StgClosure* UnpackArray(ClosureQ *queue, StgInfoTable* info,
                                StgWord **bufptrP, Capability* cap);
 
 
+/***********************************************
+ * additional interface (used by in-RTS version)
+ */
+#ifndef LIBRARY_CODE
+// creating fresh nodes in the heap. Used by in-RTS version (from other files,
+// therefore all declared in Parallel.h)
+//
+//  used here and by the primitive which creates new channels:
+//    creating a blackhole closure from scratch.
+//    Declared in Parallel.h
+// StgClosure* createBH(Capability *cap);
+
+//    used in HLComms: creating a list node
+//    Declared in Parallel.h
+// StgClosure* createListNode(Capability *cap,
+//                            StgClosure *head, StgClosure *tail);
+
+// A special structure used as the "owning thread" of system-generated
+// blackholes.  Layout [ hdr | payload ], holds a TSO header.info and blocking
+// queues in the payload field.
+//
+// Used in:
+//     createBH (here),
+//     Threads::updateThunk + Messages::messageBlackHole (special treatment)
+//     ParInit::synchroniseSystem(init),
+//     Evac::evacuate (do not evacuate) and GC::garbageCollect (evac. BQueue)
+StgInd stg_system_tso;
+
+#endif
+
 #if defined(DEBUG)
 // finger print: "type hash" of packed graph, for quick debugging
 // checks
@@ -165,7 +280,7 @@ static void checkPacket(StgWord* buffer, nat size);
 /***************************************************************
  * init function (called when loading the module)
  */
-static void pmInit(void) {
+static void init(void) {
     // we must retain all CAFs, as packet data might refer to it.
     // This variable lives in Storage.c, inhibits GC for CAFs.
     keepCAFs = rtsTrue;
@@ -175,9 +290,10 @@ static void pmInit(void) {
  * pack state and queue functions
  */
 
-// Pack state constructor, allocates space, queue and hash table. A mutable
-// array is passed as the buffer space. Note that its size comes in bytes, while
-// internally all is managed in units of StgWord.
+// Pack state constructor, allocates space, queue and hash table.
+#ifdef LIBRARY_CODE
+// A mutable array is passed as the buffer space. Note that its size comes in
+// bytes, while internally all is managed in units of StgWord.
 static PackState* initPacking(StgArrWords *mutArr) {
     PackState *ret;
 
@@ -187,7 +303,9 @@ static PackState* initPacking(StgArrWords *mutArr) {
 
     ret->buffer = mutArr->payload;
     ret->size = mutArr->bytes / sizeof(StgWord);
+
     ret->position = 0;
+
     // create a closure queue "big enough" => about what the array can hold
     ret->queue = initClosureQ(ret->size / 2);
     // new hash table
@@ -195,6 +313,28 @@ static PackState* initPacking(StgArrWords *mutArr) {
 
     return ret;
 }
+#else
+// in-RTS version uses a raw buffer instead of an array, and carries a tso
+static PackState* initRtsPacking(StgWord *buffer, nat size, StgTSO *tso) {
+    PackState *ret;
+
+    ret = (PackState*) stgMallocBytes(sizeof(PackState), "pack state");
+
+    // assume buffer and size provided by caller are correct
+    ret->buffer = buffer;
+    ret->size = size;
+
+    ret->position = 0;
+    ret->tso = tso;
+
+    // create a closure queue "big enough" => about what the array can hold
+    ret->queue = initClosureQ(ret->size / 2);
+    // new hash table
+    ret->offsets = allocHashTable();
+
+    return ret;
+}
+#endif
 
 // Pack state destructor: frees hashtable and queue. Mutable array used when
 // initialising has now been mutated.
@@ -232,7 +372,7 @@ STATIC_INLINE nat queueSize(ClosureQ* q) {
     // queue can wrap around
     int span = q->head - q->tail;
 
-    ASSERT(span < q->size);
+    ASSERT(span < (int) q->size && 0 - (int) q->size < span);
 
     if (span >= 0) {
         return (nat) span;
@@ -254,9 +394,8 @@ static void queueClosure(ClosureQ* q, StgClosure *closure) {
         stg_exit(EXIT_FAILURE);
     }
     q->queue[q->head] = closure;
-    IF_DEBUG(sparks,
-             debugBelch(">__> Q: %p (%s) at %ld\n", closure,
-                        info_type(UNTAG_CLOSURE(closure)), (long) q->head));
+    PACKETDEBUG(debugBelch(">__> Q: %p (%s) at %ld\n", closure,
+                           info_type(UNTAG_CLOSURE(closure)), (long) q->head));
     q->head = idx;
 
 }
@@ -266,13 +405,12 @@ static StgClosure *deQueueClosure(ClosureQ* q) {
     if (!queueEmpty(q)) {
         StgClosure* c = q->queue[q->tail];
         q->tail = (q->tail == q->size-1) ? 0 : (q->tail + 1);
-        IF_DEBUG(sparks,
-                debugBelch(">__> DeQ: %p (%s); %ld elems in q\n",
-                           c, info_type(UNTAG_CLOSURE(c)),
-                           (long) queueSize(q)));
+        PACKETDEBUG(debugBelch(">__> DeQ: %p (%s); %ld elems in q\n",
+                               c, info_type(UNTAG_CLOSURE(c)),
+                               (long) queueSize(q)));
         return c;
     } else {
-        IF_DEBUG(sparks, debugBelch("Q empty\n "));
+        PACKETDEBUG(debugBelch("Q empty\n "));
         return ((StgClosure*)NULL);
     }
 }
@@ -313,15 +451,18 @@ STATIC_INLINE rtsBool roomToPack(PackState* p, nat size)
 #endif
          1)             // closure tag
         >= p->size) {
-        IF_DEBUG(prof,
-                 debugBelch("Pack buffer full (size %d). ", p->position));
+        PACKDEBUG(debugBelch("Pack buffer full (size %d). ", p->position));
         return rtsFalse;
     }
     return rtsTrue;
 }
 
 // quick test for blackholes. Available somewhere else?
-STATIC_INLINE rtsBool isBlackhole(StgClosure* node) {
+
+#ifdef LIBRARY_CODE
+STATIC_INLINE
+#endif
+rtsBool isBlackhole(StgClosure* node) {
     // since ghc-7.0, blackholes are used as indirections. inspect indirectee.
     if(((StgInfoTable*)get_itbl(UNTAG_CLOSURE(node)))->type == BLACKHOLE) {
         StgClosure* indirectee = ((StgInd*)node)->indirectee;
@@ -550,6 +691,7 @@ STATIC_INLINE void Pack(PackState* p, StgWord data) {
     p->buffer[p->position++] = data;
 }
 
+#ifdef LIBRARY_CODE
 // pmtryPackToBuffer: interface function called by the foreign primop.
 // Returns packed size (in bytes!) + P_ERRCODEMAX when successful, or
 // error codes upon failure
@@ -558,7 +700,7 @@ int pmtryPackToBuffer(StgClosure* closure, StgArrWords* mutArr) {
     PackState* p;
     nat size;
 
-    IF_DEBUG(prof, {
+    PACKDEBUG( {
             char fpstr[MAX_FINGER_PRINT_LEN];
             graphFingerPrint(fpstr, closure);
             debugBelch("Packing subgraph @ %p\nGraph fingerprint is\n"
@@ -585,11 +727,10 @@ int pmtryPackToBuffer(StgClosure* closure, StgArrWords* mutArr) {
     size = p->position; // need to offset it for the primop to recognise errors
     // globalPackBuffer->unpacked_size = unpacked_size; XXX unpackedSize
 
-    IF_DEBUG(prof,
-             debugBelch("** Finished packing graph %p (%s); "
-                        "packed size: %d words; size of graph: %d\n",
-                        closure, info_type(UNTAG_CLOSURE(closure)),
-                        size, 0)); // globalPackBuffer->unpacked_size));
+    PACKDEBUG(debugBelch("** Finished packing graph %p (%s); "
+                         "packed size: %d words; size of graph: %d\n",
+                         closure, info_type(UNTAG_CLOSURE(closure)),
+                         size, 0)); // globalPackBuffer->unpacked_size));
 
     /* done packing */
     donePacking(p);
@@ -601,7 +742,59 @@ int pmtryPackToBuffer(StgClosure* closure, StgArrWords* mutArr) {
 
     return (int) size;
 }
+#else
+// packToBuffer: interface function for the RTS (DataComms).
+// Returns packed size (in bytes!) + P_ERRCODEMAX when successful, or
+// error codes upon failure
+int packToBuffer(StgClosure* closure,
+                 StgWord *buffer, nat bufsize, StgTSO *caller) {
+    int errcode = P_SUCCESS; // error code returned by PackClosure
+    PackState* p;
+    nat size;
 
+    PACKDEBUG( {
+            char fpstr[MAX_FINGER_PRINT_LEN];
+            graphFingerPrint(fpstr, closure);
+            debugBelch("RTS packs subgraph @ %p\nGraph fingerprint is\n"
+                       "\t{%s}\n", closure, fpstr);
+        });
+    p = initRtsPacking(buffer, bufsize, caller);
+
+    queueClosure(p->queue, closure);
+    do {
+        errcode = packClosure(p, deQueueClosure(p->queue));
+        if (errcode != P_SUCCESS) {
+            donePacking(p);
+            return (errcode);
+            // small value => error (real size offset by P_ERRCODEMAX)
+        }
+    } while (!queueEmpty(p->queue));
+
+    /* Check for buffer overflow (again) */
+    ASSERT((p->position + DBG_HEADROOM) < p->size);
+    IF_DEBUG(sanity, // write magic end-of-buffer word
+             p->buffer[p->position++] = END_OF_BUFFER_MARKER);
+
+    /* Record how much space the graph needs in packet and in heap */
+    size = p->position; // need to offset it for the primop to recognise errors
+    // unpacked_size = p->unpacked_size; XXX unpackedSize
+
+    PACKDEBUG(debugBelch("** Finished packing graph %p (%s); "
+                         "packed size: %d words; size of graph: %d\n",
+                         closure, info_type(UNTAG_CLOSURE(closure)),
+                         size, 0)); // globalPackBuffer->unpacked_size));
+
+    /* done packing */
+    donePacking(p);
+
+    IF_DEBUG(sanity, checkPacket(buffer, size));
+
+    size = size*sizeof(StgWord) + P_ERRCODEMAX;
+    // need offset to recognise errors in primop
+
+    return (int) size;
+}
+#endif
 
 /*
  * @packClosure@ is the heart of the normal packing code.  It packs a
@@ -658,9 +851,8 @@ loop:
     case FUN_STATIC:
     case THUNK_STATIC:
         // all these are packed with their tag (closure is still tagged)
-        IF_DEBUG(sparks,
-                 debugBelch("*>~~ Packing a %p (%s) as a PLC\n",
-                            closure, info_type_by_ip(info)));
+        PACKETDEBUG(debugBelch("*>~~ Packing a %p (%s) as a PLC\n",
+                               closure, info_type_by_ip(info)));
 
         PackPLC(p, (StgPtr)closure);
         // NB: unpacked_size of a PLC is 0
@@ -749,13 +941,41 @@ loop:
             case TSO: // blackhole without blocking queue
             case BLOCKING_QUEUE: // another thread already blocked here
 
-                // NB If desired and the calling TSO is known, it can block
-                // on this Blackhole until it is updated/data arrives.
+#ifndef LIBRARY_CODE
+                // For the in-RTS version: If the calling TSO is known, it can
+                // block on this Blackhole until it is updated/data arrives.
                 // The TSO should then restart packing when woken up.
+                if (p->tso != NULL) {
+                    StgTSO *tso = p->tso;
+                    MessageBlackHole *msg = NULL;
 
-                IF_DEBUG(sparks,
-                         debugBelch("packing hit a %s at %p (returning).\n",
-                                    info_type_by_ip(info), closure));
+                    PACKETDEBUG(debugBelch("TSO %d blocks on %s (at %p) "
+                                           "while packing.", (int)tso->id,
+                                           info_type_by_ip(info), closure));
+
+                    // blocking the tso: create a message, call msgBlackHole,
+                    // set fields in tso. If msgBlackHole signals we can
+                    // continue (threaded rts case), we jump back.
+
+                    msg = (MessageBlackHole*)
+                        allocate(tso->cap, sizeofW(MessageBlackHole));
+                    SET_HDR(msg, &stg_MSG_BLACKHOLE_info, CCS_SYSTEM);
+                    msg->tso = tso;
+                    msg->bh  = closure;
+
+                    if (messageBlackHole(tso->cap, msg)) {
+                        tso->why_blocked = BlockedOnBlackHole;
+                        tso->block_info.bh = msg;
+                        // packing failed, TSO blocked, caller should suspend it
+                        return P_BLACKHOLE;
+                    } else {
+                        goto loop; // could not block (race condition), retry
+                    }
+                }
+#endif
+                // TSO not known/library code: just return the code (caller to handle it)
+                PACKETDEBUG(debugBelch("packing hit a %s at %p (returning).\n",
+                                       info_type_by_ip(info), closure));
                 return P_BLACKHOLE;
 
             default: // an indirection, pack the indirectee (jump back to start)
@@ -768,9 +988,8 @@ loop:
     case MVAR_CLEAN:
     case MVAR_DIRTY:
     case TVAR:
-        IF_DEBUG(prof,
-                 errorBelch("Pack: packing type %s (%p) not possible",
-                            info_type_by_ip(info), closure));
+        PACKDEBUG(errorBelch("Pack: packing type %s (%p) not possible",
+                             info_type_by_ip(info), closure));
         return P_CANNOTPACK;
 
     case ARR_WORDS:
@@ -789,9 +1008,8 @@ loop:
 
     case MUT_VAR_CLEAN:
     case MUT_VAR_DIRTY: // known as IORefs in the Haskell world
-        IF_DEBUG(prof,
-                 errorBelch("Pack: packing type %s (%p) not possible",
-                            info_type_by_ip(info),closure));
+        PACKDEBUG(errorBelch("Pack: packing type %s (%p) not possible",
+                             info_type_by_ip(info),closure));
         return P_CANNOTPACK;
 
     case WEAK:
@@ -839,15 +1057,13 @@ loop:
 #endif
 
 unsupported:
-        IF_DEBUG(prof,
-                 errorBelch("Pack: packing type %s (%p) not implemented",
-                            info_type_by_ip(info), closure));
+        PACKDEBUG(errorBelch("Pack: packing type %s (%p) not implemented",
+                             info_type_by_ip(info), closure));
         return P_UNSUPPORTED;
 
 impossible:
-        IF_DEBUG(prof,
-                 errorBelch("{Pack}Daq Qagh: found %s (%p) when packing",
-                            info_type_by_ip(info), closure));
+        PACKDEBUG(errorBelch("{Pack}Daq Qagh: found %s (%p) when packing",
+                             info_type_by_ip(info), closure));
         return P_IMPOSSIBLE;
 
     default:
@@ -878,11 +1094,10 @@ static StgWord PackGeneric(PackState* p, StgClosure* closure)
 
     ASSERT(!isBlackhole(closure));
 
-    IF_DEBUG(sparks,
-             debugBelch("*>== %p (%s): generic packing"
-                        "(size=%d, ptrs=%d, nonptrs=%d, and tag %d)\n",
-                        closure, info_type(closure), size, ptrs, nonptrs,
-                        (int)tag));
+    PACKETDEBUG(debugBelch("*>== %p (%s): generic packing"
+                           "(size=%d, ptrs=%d, nonptrs=%d, and tag %d)\n",
+                           closure, info_type(closure), size, ptrs, nonptrs,
+                           (int)tag));
 
     // make sure we can pack this closure into the current buffer
     if (!roomToPack(p, HEADERSIZE + vhs + nonptrs))
@@ -1019,7 +1234,7 @@ static StgWord PackPAP(PackState *p, StgPAP *pap) {
              get_itbl((StgClosure*)pap)->type);
     }
 
-    IF_DEBUG(sparks, {
+    PACKETDEBUG( {
             debugBelch("Packing %s closure @ %p,"
                        "with stack of size %d\n",
                        info_type((StgClosure*) pap), pap, n_args);
@@ -1124,8 +1339,7 @@ static StgWord PackPAP(PackState *p, StgPAP *pap) {
         Pack(p, bitmap);
     } else {
         // large bitmap, a lot of gymnastics
-        IF_DEBUG(sparks,
-                 debugBelch("yuck, large bitmap"));
+        PACKETDEBUG(debugBelch("yuck, large bitmap"));
         return P_UNSUPPORTED; // XXX following code is an unchecked draft
         // use size as tag for large bitmap (see above, ~0L is unlikely size)
         Pack(p, bsizeW);
@@ -1209,7 +1423,6 @@ static StgWord PackPAP(PackState *p, StgPAP *pap) {
 // We implement it even though, leave it to higher levels to restrict.
 static StgWord PackArray(PackState *p, StgClosure *closure) {
 
-    StgInfoTable *info;
     StgClosure *infoptr;
     nat i, payloadsize, packsize;
 
@@ -1219,13 +1432,15 @@ static StgWord PackArray(PackState *p, StgClosure *closure) {
     tag = GET_CLOSURE_TAG(closure);
     closure = UNTAG_CLOSURE(closure);
 
+#if DEBUG
     /* get info about basic layout of the closure */
-    info = get_itbl(closure);
+    StgInfoTable *info = get_itbl(closure);
 
     ASSERT( info->type == MUT_ARR_PTRS_CLEAN
             || info->type == MUT_ARR_PTRS_DIRTY
             || info->type == MUT_ARR_PTRS_FROZEN0
             || info->type == MUT_ARR_PTRS_FROZEN);
+#endif
 
     // MUT_ARR_PTRS_* {HDR,(no. of)ptrs,size(total incl.card table)}
     // Only pack header, not card table which follows the data.
@@ -1234,11 +1449,10 @@ static StgWord PackArray(PackState *p, StgClosure *closure) {
 
     // the function in ClosureMacros.h would include the header:
     // arr_words_sizeW(stgCast(StgArrWords*,q));
-    IF_DEBUG(sparks,
-             debugBelch("*>== %p (%s): packing array"
-                        "(%d words) (size=%d)\n",
-                        closure, info_type(closure), payloadsize,
-                        (int)closure_sizeW(closure)));
+    PACKETDEBUG(debugBelch("*>== %p (%s): packing array"
+                           "(%d words) (size=%d)\n",
+                           closure, info_type(closure), payloadsize,
+                           (int)closure_sizeW(closure)));
 
     // check if enough room in the pack buffer
     if (!roomToPack(p, packsize)) return P_NOBUFFER;
@@ -1276,21 +1490,10 @@ static StgWord PackArray(PackState *p, StgClosure *closure) {
   @UnpackGraph@ unpacks the graph contained in a message buffer.  It
   returns a pointer to the new graph.
 
-  UnpackGraph uses a number of global static fields. Therefore, the lock
-  pack_mutex should be held when calling it (can be released immediately
-  after).
-
-  The inPort parameter restores the unpack state when the sent graph
-  is sent in more than one message.
-
-  Formerly, we also had a globalAddr** @gamap@ parameter: set to
+  Formerly, there was also a globalAddr** @gamap@ parameter: set to
   point to an array of (oldGA,newGA) pairs which were created as a result
   of unpacking the buffer; and nat* @nGAs@ set to the number of GA pairs which
   were created.
-
-  With the new per-capability allocation, we need to pass the cap.
-  parameter around all the time. Could put it into a global unpacking
-  state...
 
   for "pointer tagging", we assume here that all stored
   info pointers (each first word of a packed closure) also carry the
@@ -1300,9 +1503,13 @@ static StgWord PackArray(PackState *p, StgClosure *closure) {
   Done by UnpackClosure(), see there.
 */
 
+#ifdef LIBRARY_CODE
 // unpacking from a Haskell array (using the Haskell Byte Array)
 // may return error code P_GARBLED
 StgClosure* pmUnpackGraphWrapper(StgArrWords* packBufferArray, Capability* cap)
+#else
+StgClosure* unpackGraphWrapper(StgArrWords* packBufferArray, Capability* cap)
+#endif
 {
     nat size;
     StgWord *buffer;
@@ -1317,6 +1524,39 @@ StgClosure* pmUnpackGraphWrapper(StgArrWords* packBufferArray, Capability* cap)
     return (newGraph == NULL ? (StgClosure *) P_GARBLED : newGraph);
 }
 
+#ifndef LIBRARY_CODE
+StgClosure*
+unpackGraph(rtsPackBuffer *packBuffer, Capability* cap) {
+
+  StgClosure *graphroot;
+
+  IF_DEBUG(sanity, // do a sanity check on the incoming packet
+           checkPacket(packBuffer->buffer, packBuffer->size));
+
+  PACKDEBUG(debugBelch("Packing: Header unpacked. (bufsize=%" FMT_Word
+                       ", heapsize=%" FMT_Word ")\nUnpacking closures...\n",
+                       packBuffer->size, packBuffer->unpacked_size));
+
+  graphroot = unpackGraph_(packBuffer->buffer, packBuffer->size, cap);
+
+  // if this fails outside the library code, complain and abort the program
+  if (graphroot == NULL) {
+    barf("Failure during unpacking, aborting program");
+  }
+
+  // wipe the pack buffer if we do sanity checks.
+  // Only valid for the in-RTS version where data is never reused
+  IF_DEBUG(sanity, {
+          StgPtr p;
+          for (p=(StgPtr)packBuffer->buffer;
+               p<(StgPtr)(packBuffer->buffer)+(packBuffer->size);)
+              *p++ = 0xdeadbeef;
+      });
+
+  return (graphroot);
+}
+#endif
+
 // Internal worker function, not allowed to edit the buffer at all
 // (used with with an immutable Haskell ByteArray# as buffer for
 // deserialisation). This function returns NULL upon
@@ -1329,9 +1569,8 @@ static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
     HashTable* offsets;
     ClosureQ* queue;
 
-    IF_DEBUG(prof,
-             debugBelch("Unpacking buffer @ %p (%" FMT_Word " words)\n",
-                        buffer, size));
+    PACKDEBUG(debugBelch("Unpacking buffer @ %p (%" FMT_Word " words)\n",
+                         buffer, size));
     IF_DEBUG(sanity, checkPacket(buffer, size));
 
     offsets = allocHashTable();
@@ -1361,7 +1600,7 @@ static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
         if (closure == NULL) {
             // something is wrong with the packet, give up immediately
             // we do not try to find out details of what is wrong...
-            IF_DEBUG(prof, debugBelch("Unpacking error at address %p",bufptr));
+            PACKDEBUG(debugBelch("Unpacking error at address %p",bufptr));
             freeHashTable(offsets, NULL);
             freeClosureQ(queue);
             return (StgClosure *) NULL;
@@ -1369,9 +1608,8 @@ static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
 
         // store closure address for offsets (if we should, see above)
         if (currentOffset != 0) {
-            IF_DEBUG(sparks,
-                     debugBelch("---> Entry in Offset Table: (%d, %p)\n",
-                                currentOffset, closure));
+            PACKETDEBUG(debugBelch("---> Entry in Offset Table: (%d, %p)\n",
+                                   currentOffset, closure));
             // note that the offset is stored WITH TAG
             insertHashTable(offsets, currentOffset, (void*) closure);
         }
@@ -1382,8 +1620,8 @@ static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
         if (parent == NULL) {
             /* we are at the root. Do not remove the tag */
             graphroot = closure;
-            IF_DEBUG(prof, debugBelch("Graph root %p, tag %x", closure,
-                                      (int) GET_CLOSURE_TAG(closure)));
+            PACKDEBUG(debugBelch("Graph root %p, tag %x", closure,
+                                 (int) GET_CLOSURE_TAG(closure)));
         } else {
             // packet fragmentation code would need to check whether
             // there is a temporary blackhole here. Not supported.
@@ -1403,7 +1641,7 @@ static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
         // several packets (fragmentation), in which case we would
         // save the state. Not supported here.
 
-        IF_DEBUG(prof, errorBelch("Pack buffer overrun"));
+        PACKDEBUG(errorBelch("Pack buffer overrun"));
         return (StgClosure *) NULL;
     }
 
@@ -1419,12 +1657,12 @@ static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
     // ToDo: are we *certain* graphroot has been set??? WDP 95/07
     ASSERT(graphroot!=NULL);
 
-    IF_DEBUG(prof, {
+    PACKDEBUG( {
             char fpstr[MAX_FINGER_PRINT_LEN];
             graphFingerPrint(fpstr, graphroot);
             debugBelch(">>> unpacked graph at %p\n Fingerprint is\n"
                        "\t{%s}\n", graphroot, fpstr);
-                });
+        });
 
     return graphroot;
 }
@@ -1534,10 +1772,9 @@ UnpackClosure (ClosureQ* q, HashTable* offsets,
             */
             tag = GET_CLOSURE_TAG((StgClosure*) **bufptrP);
             ip  = UNTAG_CAST(StgInfoTable*, P_POINTER(**bufptrP));
-            IF_DEBUG(sparks,
-                     debugBelch("pointer tagging: removed tag %d "
-                                "from info pointer %p in packet\n",
-                                (int) tag, ip));
+            PACKETDEBUG(debugBelch("pointer tagging: removed tag %d "
+                                   "from info pointer %p in packet\n",
+                                   (int) tag, ip));
 
             // The essential part starts here: allocate heap, fill in
             // closure, queue it to fill pointer payload later.
@@ -1606,11 +1843,11 @@ UnpackClosure (ClosureQ* q, HashTable* offsets,
             case SMALL_MUT_ARR_PTRS_FROZEN:
 #endif
 
-                IF_DEBUG(sparks,
-                    debugBelch("Allocating %d heap words for %s-closure:\n"
-                               "(%d ptrs, %d non-ptrs, vhs = %d)\n"
-                               , size, info_type_by_ip(INFO_PTR_TO_STRUCT(ip)),
-                               ptrs, nonptrs, vhs));
+                PACKETDEBUG(
+                     debugBelch("Allocating %d heap words for %s-closure:\n"
+                                "(%d ptrs, %d non-ptrs, vhs = %d)\n"
+                                , size, info_type_by_ip(INFO_PTR_TO_STRUCT(ip)),
+                                ptrs, nonptrs, vhs));
 
                 closure = (StgClosure*) allocate(cap, size);
 
@@ -1682,9 +1919,8 @@ STATIC_INLINE StgClosure *UnpackOffset(HashTable* offsets, StgWord **bufptrP) {
     // find this closure in an offset hashtable (we can have several packets)
     existing = (StgClosure *) lookupHashTable(offsets, offset);
 
-    IF_DEBUG(sparks,
-             debugBelch("*<__ Unpacked indirection to closure %p"
-                        " (was OFFSET %d)", existing, offset));
+    PACKETDEBUG(debugBelch("*<__ Unpacked indirection to closure %p"
+                           " (was OFFSET %d)", existing, offset));
 
     // we should have found something...
     ASSERT(existing!= NULL);
@@ -1703,8 +1939,7 @@ STATIC_INLINE  StgClosure *UnpackPLC(StgWord **bufptrP) {
     // but need to correct the offset
     plc = (StgClosure*) P_POINTER(**bufptrP);
     (*bufptrP)++; // skip address
-    IF_DEBUG(sparks,
-            debugBelch("*<^^ Unpacked PLC at %p\n", plc));
+    PACKETDEBUG(debugBelch("*<^^ Unpacked PLC at %p\n", plc));
     return plc;
 }
 
@@ -1712,7 +1947,8 @@ STATIC_INLINE  StgClosure *UnpackPLC(StgWord **bufptrP) {
 static StgClosure * UnpackPAP(ClosureQ *queue, StgInfoTable *info,
                               StgWord **bufptrP, Capability* cap) {
 
-    nat n_args, size, bsize, bsizeW, hsize, i;
+    nat n_args, size, hsize, i;
+    StgWord bsizeW;
     StgPtr pap; // PAP/AP is constructed here, but untyped (would need
                 // to distinguish the AP case all the time)
 
@@ -1751,14 +1987,12 @@ static StgClosure * UnpackPAP(ClosureQ *queue, StgInfoTable *info,
         size  = AP_sizeW(n_args);
         break;
     default:
-        IF_DEBUG(prof,
-                 errorBelch("UnpackPAP: strange info pointer, type %d ",
-                            INFO_PTR_TO_STRUCT(info)->type));
+        PACKDEBUG(errorBelch("UnpackPAP: strange info pointer, type %d ",
+                             INFO_PTR_TO_STRUCT(info)->type));
         return (StgClosure*) NULL;
     }
-    IF_DEBUG(sparks,
-             debugBelch("allocating %d heap words for a PAP (%d args)\n",
-                        size,  n_args));
+    PACKETDEBUG(debugBelch("allocating %d heap words for a PAP (%d args)\n",
+                           size,  n_args));
     pap = (StgPtr) allocate(cap, size);
 
     // fill in info ptr (extracted and given as argument by caller)
@@ -1775,7 +2009,7 @@ static StgClosure * UnpackPAP(ClosureQ *queue, StgInfoTable *info,
     pap[hsize] = (StgWord) NULL;
 
     // read bitmap size and bitmap
-    bsizeW = (nat) *(*bufptrP)++;
+    bsizeW = *(*bufptrP)++;
 
     // unpack the stack (size == args), starting at pap[hsize]
     // make room for fct. pointer, thus start at hsize+1
@@ -1864,9 +2098,8 @@ static StgClosure* UnpackArray(ClosureQ *queue, StgInfoTable* info,
     if (type != MUT_ARR_PTRS_CLEAN && type != MUT_ARR_PTRS_DIRTY &&
         type != MUT_ARR_PTRS_FROZEN0 && type != MUT_ARR_PTRS_FROZEN) {
 
-        IF_DEBUG(prof,
-                 errorBelch("UnpackArray: unexpected closure type %d",
-                            INFO_PTR_TO_STRUCT(info)->type));
+        PACKDEBUG(errorBelch("UnpackArray: unexpected closure type %d",
+                             INFO_PTR_TO_STRUCT(info)->type));
             return (StgClosure *) NULL;
     }
 
@@ -1884,9 +2117,9 @@ static StgClosure* UnpackArray(ClosureQ *queue, StgInfoTable* info,
     // size = sizeofW(StgMutArrPtrs) + (StgWord) *((*bufptrP)+2);
     size = closure_sizeW_((StgClosure*) *bufptrP, INFO_PTR_TO_STRUCT(info));
     ASSERT(size == sizeofW(StgMutArrPtrs) + ((StgMutArrPtrs*) *bufptrP)->size);
-    IF_DEBUG(sparks,
-             debugBelch("Unpacking ptrs array, %" FMT_Word " ptrs, size %d\n",
-                        (StgWord) *((*bufptrP)+1), size));
+    PACKETDEBUG(debugBelch("Unpacking ptrs array, %" FMT_Word
+                           " ptrs, size %d\n",
+                           (StgWord) *((*bufptrP)+1), size));
     array = (StgMutArrPtrs *) allocate(cap, size);
 
     // set area 0 (Blackhole-test in unpacking and card table)
@@ -1899,11 +2132,54 @@ static StgClosure* UnpackArray(ClosureQ *queue, StgInfoTable* info,
     // and enqueue it, pointers will be filled in subsequently
     queueClosure(queue, (StgClosure*)array);
 
-    IF_DEBUG(sparks,
-            debugBelch(" Array created @ %p.\n",array));
+    PACKETDEBUG(debugBelch(" Array created @ %p.\n",array));
 
     return (StgClosure*) array;
 }
+
+
+#ifndef LIBRARY_CODE
+// creating new heap closures:
+
+// creating a black hole (to receive remote data), owned by the system tso
+StgClosure* createBH(Capability *cap) {
+  StgClosure *new;
+
+  // a blackhole carries one pointer of payload, see StgMiscClosures.cmm, so
+  // we allocate 2 words. The payload indicates the blackhole owner, in our
+  // case it is the "system" (or later, the cap, for -threaded rts).
+  new = (StgClosure*) allocate(cap, 2);
+
+  SET_HDR(new, &stg_BLACKHOLE_info, CCS_SYSTEM); // ccs to be checked!
+
+  new->payload[0] = (StgClosure*) &stg_system_tso; 
+          // see above. Pseudo-TSO (has TSO info pointer) owning all
+          // system-created black holes, and storing BQs.
+
+  return new;
+}
+
+// cons node info pointer, from GHC.Base
+#define CONS_INFO ghczmprim_GHCziTypes_ZC_con_info
+// constructor tag for pointer tagging. We return a tagged pointer here!
+#define CONS_TAG  2
+extern const StgInfoTable CONS_INFO[];
+
+// creating a list node. returns a tagged pointer.
+StgClosure* createListNode(Capability *cap, StgClosure *head, StgClosure *tail) {
+  StgClosure *new;
+
+  // a list node (CONS) carries two pointers => 3 words to allocate
+  // if we have given a capability, we can allocateLocal (cheaper, no lock)
+  new = (StgClosure*) allocate(cap, 3);
+
+  SET_HDR(new, CONS_INFO, CCS_SYSTEM); // to be checked!!!
+  new->payload[0] = head;
+  new->payload[1] = tail;
+
+  return TAG_CLOSURE(CONS_TAG,new);
+}
+#endif
 
 // debugging functions
 #if defined(DEBUG)
@@ -2294,15 +2570,15 @@ print:
 
 //  Sanity check on a packet.
 //    This does a full iteration over the packet, as in UnpackGraph.
-//  Arguments: buffer data ptr, buffer size in words 
+//  Arguments: buffer data ptr, buffer size in words
 static void checkPacket(StgWord* buffer, nat size) {
     StgInt packsize, openptrs;
     nat clsize, ptrs, nonptrs, vhs;
     StgWord *bufptr;
     HashTable *offsets;
 
-    IF_DEBUG(prof, debugBelch("checking packet (@ %p), size %ld words ...",
-                              buffer, (long) size));
+    PACKDEBUG(debugBelch("checking packet (@ %p), size %ld words ...",
+                         buffer, (long) size));
 
     offsets = allocHashTable(); // used to identify valid offsets
     packsize = 0; // compared against argument
@@ -2352,7 +2628,7 @@ static void checkPacket(StgWord* buffer, nat size) {
             ip = getClosureInfo((StgClosure*) bufptr, INFO_PTR_TO_STRUCT(ip),
                                 &clsize, &ptrs, &nonptrs, &vhs);
 
-            // IF_DEBUG(sparks,debugBelch("size (%ld + %d + %d +%d, = %d)",
+            // PACKETDEBUG(debugBelch("size (%ld + %d + %d +%d, = %d)",
             //              HEADERSIZE, vhs, ptrs, nonptrs, clsize));
 
             // This is rather a test for getClosureInfo...but used here
@@ -2412,8 +2688,7 @@ static void checkPacket(StgWord* buffer, nat size) {
 
     } while (openptrs != 0 && packsize < size);
 
-    IF_DEBUG(prof,
-            debugBelch(" traversed %" FMT_Word " words.", packsize));
+    PACKDEBUG(debugBelch(" traversed %" FMT_Word " words.", packsize));
 
     if (openptrs != 0) {
         barf("%d open pointers at end of packet ",
@@ -2428,7 +2703,7 @@ static void checkPacket(StgWord* buffer, nat size) {
     }
 
     freeHashTable(offsets, NULL);
-    IF_DEBUG(prof, debugBelch("packet OK\n"));
+    PACKDEBUG(debugBelch("packet OK\n"));
 
 }
 
