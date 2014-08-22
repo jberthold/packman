@@ -78,7 +78,7 @@
 #define OFFSET  2L
 #define CLOSURE 3L
 // marker for small bitmap in PAP packing
-#define SMALL_BITMAP_TAG (~0L)
+#define SMALL_BITMAP_TAG (~0UL)
 
 /* Tagging macros will work for any word-sized type, not only
   closures. In the packet, we tag info pointers instead of
@@ -1221,13 +1221,15 @@ static StgWord PackPAP(PackState *p, StgPAP *pap) {
         n_args = pap->n_args;
         hsize  = HEADERSIZE+1;
         fun    = pap->fun;
+        ptr    = (StgPtr) pap->payload;
         break;
 
     case AP:
-            n_args = ((StgAP*) pap)->n_args;
-            hsize  = sizeofW(StgThunkHeader)+1;
-            fun    = ((StgAP*) pap)->fun;
-            break;
+        n_args = ((StgAP*) pap)->n_args;
+        hsize  = sizeofW(StgThunkHeader)+1;
+        fun    = ((StgAP*) pap)->fun;
+        ptr    = (StgPtr) ((StgAP*) pap)->payload;
+        break;
 
     default: // checked in packClosure, should not happen here
         barf("PackPAP: strange info pointer, type %d ",
@@ -1574,7 +1576,7 @@ static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
     IF_DEBUG(sanity, checkPacket(buffer, size));
 
     offsets = allocHashTable();
-    queue   = initClosureQ(size / 2);
+    queue   = initClosureQ(size);
 
     graphroot = parent = (StgClosure *) NULL;
     bufptr = buffer;
