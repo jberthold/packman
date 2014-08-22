@@ -183,6 +183,9 @@ int pmtryPackToBuffer(StgClosure* closure, StgArrWords* mutArr);
 // in-RTS version: packToBuffer, declared in Parallel.h
 // int packToBuffer(StgClosure* closure,
 //                  StgWord *buffer, nat bufsize, StgTSO *caller);
+// serialisation into a Haskell Byte array, returning error codes on failure
+// StgClosure* tryPackToMemory(StgClosure* graphroot, StgTSO* tso,
+//                             Capability* cap);
 #endif
 
 // packing static addresses and offsets
@@ -793,6 +796,60 @@ int packToBuffer(StgClosure* closure,
     // need offset to recognise errors in primop
 
     return (int) size;
+}
+
+// pack, then copy the buffer into newly (Haskell-)allocated space
+// (unless packing was blocked, in which case we return the error code)
+// This implements primitive serialize# and #trySerialize (if tso==NULL).
+StgClosure* tryPackToMemory(StgClosure* graphroot,
+                            StgTSO* tso, Capability* cap) {
+    StgWord *buffer;
+    StgWord packedSize, trySize;
+    StgArrWords* wordArray;
+
+#define ONEMEGABYTE 1048576
+    trySize = ONEMEGABYTE; // start with 1MB buffer, increase if it fails
+
+    buffer = (StgWord*) stgMallocBytes(trySize, "serialize buffer");
+    packedSize = packToBuffer(graphroot, buffer, trySize, tso);
+
+    while (packedSize == P_NOBUFFER && trySize <= 20*ONEMEGABYTE) {
+        // packing failed due to buffer overflow, increase and retry.
+        // Stop retrying at 20 MB (arbitrarily chosen here, could be RTS option)
+        stgFree(buffer);
+        trySize += ONEMEGABYTE;
+        buffer = (StgWord*) stgMallocBytes(trySize, "serialize buffer");
+        packedSize = packToBuffer(graphroot, buffer, trySize, tso);
+    }
+
+    // here: not failing due to NOBUFFER
+
+    if (isPackError(packedSize)) {
+        // packing hit an error, return this error to caller
+        stgFree(buffer);
+#ifndef DEBUG
+        // if we are not debugging, crash the system upon impossible cases.
+        if (packedSize == P_IMPOSSIBLE) {
+            barf("GHC RTS found an impossible closure during packing.");
+            // never returns
+        }
+#endif
+        return ((StgClosure*) packedSize);
+    }
+
+    packedSize -= P_ERRCODEMAX; // now size is correct, in bytes
+
+    // allocate space to hold an array
+    //   +---------+----------+------------------------+
+    //   |ARR_WORDS| n_bytes  | data (array of words)  |
+    //   +---------+----------+------------------------+
+    wordArray = (StgArrWords*) allocate(cap, 2 + packedSize / sizeof(StgWord));
+    SET_HDR(wordArray, &stg_ARR_WORDS_info, CCS_SYSTEM);
+    wordArray->bytes = packedSize;
+    memcpy((void*) &(wordArray->payload), buffer, packedSize);
+    stgFree(buffer);
+
+    return ((StgClosure*) wordArray);
 }
 #endif
 
