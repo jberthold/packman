@@ -86,16 +86,16 @@ typedef struct PackState_ {
 static void pmInit(void) __attribute__((constructor));
 
 // init/destruct pack data structure
-PackState* initPacking(StgArrWords *mutArr);
-void donePacking(PackState *state);
+static PackState* initPacking(StgArrWords *mutArr);
+static void donePacking(PackState *state);
 
 // closure queue
-ClosureQ* initClosureQ(nat size);
-void freeClosureQ(ClosureQ* q);
+static ClosureQ* initClosureQ(nat size);
+static void freeClosureQ(ClosureQ* q);
 STATIC_INLINE rtsBool queueEmpty(ClosureQ* q);
 STATIC_INLINE nat queueSize(ClosureQ* q);
-void queueClosure(ClosureQ* q, StgClosure *closure);
-StgClosure *deQueueClosure(ClosureQ* q);
+static void queueClosure(ClosureQ* q, StgClosure *closure);
+static StgClosure *deQueueClosure(ClosureQ* q);
 
 // packing
 
@@ -116,7 +116,7 @@ int pmtryPackToBuffer(StgClosure* closure, StgArrWords* mutArr);
 STATIC_INLINE void PackPLC(PackState* p, StgPtr addr);
 STATIC_INLINE void PackOffset(PackState* p, StgWord offset);
 // packing routine, branches into special cases
-StgWord packClosure(PackState* p, StgClosure *closure);
+static StgWord packClosure(PackState* p, StgClosure *closure);
 
 // low-level packing: fill one StgWord of data into the globalPackBuffer
 STATIC_INLINE void Pack(PackState* p, StgWord data);
@@ -134,7 +134,7 @@ static StgWord PackArray(PackState* p, StgClosure* array);
 StgClosure* pmUnpackGraphWrapper(StgArrWords* packBufferArray, Capability* cap);
 
 // internal function working on the raw data buffer
-StgClosure* pmUnpackGraph_(StgWord *buffer, StgInt size, Capability* cap);
+static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap);
 
 // helper function to find next pointer (filling in pointers)
 STATIC_INLINE void locateNextParent(ClosureQ* q, StgClosure **parentP,
@@ -159,7 +159,7 @@ static StgClosure* UnpackArray(ClosureQ *queue, StgInfoTable* info,
 #define MAX_FINGER_PRINT_LEN  1023
 static void graphFingerPrint(char* fp, StgClosure *graphroot);
 
-void pmcheckPacket(StgWord* buffer, nat size);
+static void checkPacket(StgWord* buffer, nat size);
 #endif
 
 /***************************************************************
@@ -178,7 +178,7 @@ static void pmInit(void) {
 // Pack state constructor, allocates space, queue and hash table. A mutable
 // array is passed as the buffer space. Note that its size comes in bytes, while
 // internally all is managed in units of StgWord.
-PackState* initPacking(StgArrWords *mutArr) {
+static PackState* initPacking(StgArrWords *mutArr) {
     PackState *ret;
 
     ret = (PackState*) stgMallocBytes(sizeof(PackState), "pack state");
@@ -198,7 +198,7 @@ PackState* initPacking(StgArrWords *mutArr) {
 
 // Pack state destructor: frees hashtable and queue. Mutable array used when
 // initialising has now been mutated.
-void donePacking(PackState *state) {
+static void donePacking(PackState *state) {
     freeHashTable(state->offsets, NULL);
     freeClosureQ(state->queue);
     stgFree(state);
@@ -206,7 +206,7 @@ void donePacking(PackState *state) {
 }
 
 // initialise a closure queue for "size" many closures
-ClosureQ* initClosureQ(nat size) {
+static ClosureQ* initClosureQ(nat size) {
     ClosureQ* ret;
     ret = (ClosureQ*) stgMallocBytes(sizeof(ClosureQ), "cl.queue");
     ret->queue = (StgClosure**)
@@ -217,7 +217,7 @@ ClosureQ* initClosureQ(nat size) {
 }
 
 // free an allocated closure queue
-void freeClosureQ(ClosureQ* q) {
+static void freeClosureQ(ClosureQ* q) {
     stgFree(q->queue);
     stgFree(q);
 }
@@ -243,7 +243,7 @@ STATIC_INLINE nat queueSize(ClosureQ* q) {
 }
 
 // enqueue a closure
-void queueClosure(ClosureQ* q, StgClosure *closure) {
+static void queueClosure(ClosureQ* q, StgClosure *closure) {
 
     // next index, wrapping around when required
     nat idx = (q->head == q->size - 1) ? 0 : q->head + 1;
@@ -262,7 +262,7 @@ void queueClosure(ClosureQ* q, StgClosure *closure) {
 }
 
 // dequeue a closure
-StgClosure *deQueueClosure(ClosureQ* q) {
+static StgClosure *deQueueClosure(ClosureQ* q) {
     if (!queueEmpty(q)) {
         StgClosure* c = q->queue[q->tail];
         q->tail = (q->tail == q->size-1) ? 0 : (q->tail + 1);
@@ -594,7 +594,7 @@ int pmtryPackToBuffer(StgClosure* closure, StgArrWords* mutArr) {
     /* done packing */
     donePacking(p);
 
-    IF_DEBUG(sanity, pmcheckPacket(mutArr->payload, size));
+    IF_DEBUG(sanity, checkPacket(mutArr->payload, size));
 
     size = size*sizeof(StgWord) + P_ERRCODEMAX;
     // need offset to recognise errors in primop
@@ -612,7 +612,7 @@ int pmtryPackToBuffer(StgClosure* closure, StgArrWords* mutArr) {
  * status when packing a closure fails.
  */
 
-StgWord packClosure(PackState* p, StgClosure *closure) {
+static StgWord packClosure(PackState* p, StgClosure *closure) {
 
     StgInfoTable *info;
     StgWord offset;
@@ -1312,7 +1312,7 @@ StgClosure* pmUnpackGraphWrapper(StgArrWords* packBufferArray, Capability* cap)
     buffer = (StgWord*) packBufferArray->payload;
 
     // unpack. Might return NULL in case the buffer was inconsistent.
-    newGraph = pmUnpackGraph_(buffer, size, cap);
+    newGraph = unpackGraph_(buffer, size, cap);
 
     return (newGraph == NULL ? (StgClosure *) P_GARBLED : newGraph);
 }
@@ -1321,8 +1321,7 @@ StgClosure* pmUnpackGraphWrapper(StgArrWords* packBufferArray, Capability* cap)
 // (used with with an immutable Haskell ByteArray# as buffer for
 // deserialisation). This function returns NULL upon
 // errors/inconsistencies in buffer (avoiding to abort the program).
-StgClosure* pmUnpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
-                        // replace these two by a struct
+static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
     StgWord* bufptr;
     StgClosure *closure, *parent, *graphroot;
     nat pptr = 0, pptrs = 0, pvhs = 0;
@@ -1333,7 +1332,7 @@ StgClosure* pmUnpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
     IF_DEBUG(prof,
              debugBelch("Unpacking buffer @ %p (%" FMT_Word " words)\n",
                         buffer, size));
-    IF_DEBUG(sanity, pmcheckPacket(buffer, size));
+    IF_DEBUG(sanity, checkPacket(buffer, size));
 
     offsets = allocHashTable();
     queue   = initClosureQ(size / 2);
@@ -2296,7 +2295,7 @@ print:
 //  Sanity check on a packet.
 //    This does a full iteration over the packet, as in UnpackGraph.
 //  Arguments: buffer data ptr, buffer size in words 
-void pmcheckPacket(StgWord* buffer, nat size) {
+static void checkPacket(StgWord* buffer, nat size) {
     StgInt packsize, openptrs;
     nat clsize, ptrs, nonptrs, vhs;
     StgWord *bufptr;
