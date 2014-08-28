@@ -1,8 +1,15 @@
 name:                packman
 version:             0.1
 synopsis:            Serialization library for GHC
+description:         This package provides Haskell data serialisation 
+                     independent of evaluation, by accessing the Haskell heap
+                     using a foreign primitive operation. Any Haskell data can
+                     be serialised and later deserialised in the same or a new
+                     run of the same program (that means, the same executable
+                     file).
 category:            Serialization, Data, GHC
 license:             BSD3
+license-file:        LICENSE
 author:              Michael Budde, Ásbjørn V. Jøkladal, Jost Berthold
 maintainer:          jb.diku@gmail.com
 build-type:          Simple
@@ -22,10 +29,10 @@ flag Debug
 
 library
   exposed-modules:   GHC.Packing
-  other-modules:     GHC.Packing.PackException
+                     GHC.Packing.PackException
                      GHC.Packing.Type
                      GHC.Packing.Core
-  build-depends:     base >= 4.7,
+  build-depends:     base >= 4.7 && < 5,
                      ghc >= 7.8,
                      ghc-prim >= 0.3,
                      array >= 0.5,
