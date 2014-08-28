@@ -22,6 +22,9 @@ flag Debug
 
 library
   exposed-modules:   GHC.Packing
+  other-modules:     GHC.Packing.PackException
+                     GHC.Packing.Type
+                     GHC.Packing.Core
   build-depends:     base >= 4.7,
                      ghc >= 7.8,
                      ghc-prim >= 0.3,
