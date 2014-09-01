@@ -96,5 +96,5 @@ pack_ThreadId = ("packing a thread ID (unsupported)",
 pack_MVar :: (String, IO Bool)
 pack_MVar = ("packing an MVar (should be cannotpack)",
              do m <- newEmptyMVar :: IO (MVar Integer)
-                expectException P_CANNOT_PACK $ trySerialize m
+                expectException P_CANNOTPACK $ trySerialize m
             )

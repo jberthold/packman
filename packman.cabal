@@ -82,7 +82,8 @@ test-suite testexceptions
   if flag(debug)
     ghc-options:     -debug -optc-g -optc-DDEBUG
 
--- test-suite alltests DOZNWOK!
+-- DOZNWOK!
+-- test-suite alltests
 --   type:              detailed-0.9
 --   test-module:       Test.AllTests
 --   build-depends:     base >= 4.7,
@@ -112,7 +113,9 @@ test-suite testmthread
                      packman
   default-language:  Haskell2010
   if flag(debug)
-    ghc-options:     -debug -optc-g -optc-DDEBUG
+    ghc-options:     -debug -optc-g -optc-DDEBUG -threaded
+  else
+    ghc-options:     -threaded
 
 
 source-repository head
