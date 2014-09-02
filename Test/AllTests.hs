@@ -1,7 +1,7 @@
 {-
   Some tests to verify that serialisation works as expected
 -}
-module Test.AllTests(tests)
+module AllTests(tests)
     where
 
 import GHC.Packing
@@ -48,11 +48,7 @@ tests = do putStrLn "Running all tests"
            mapM (return . Test . uncurry runIt) mytests
 
 -- all configured tests, see below
-mytests = [eval_array , testingOnly ]
-          -- , pack_array, pack_ThreadId, pack_MVar ]
-
--- baaang. this one fails, with a weird linker error. Cabal bug?
-testingOnly = ("testing only", putStrLn (show P_UNSUPPORTED) >> return True)
+mytests = [eval_array, pack_array, pack_ThreadId, pack_MVar ]
 
 -- test data
 arr, output :: A.Array Int Int
