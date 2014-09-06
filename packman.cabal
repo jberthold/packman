@@ -116,9 +116,9 @@ test-suite testmthread
                      packman
   default-language:  Haskell2010
   if flag(debug)
-    ghc-options:     -debug -optc-g -optc-DDEBUG -threaded
+    ghc-options:     -with-rtsopts=-N4 -debug -threaded -optc-g -optc-DDEBUG
   else
-    ghc-options:     -threaded
+    ghc-options:     -with-rtsopts=-N4 -threaded
 
 source-repository head
   type:     git
