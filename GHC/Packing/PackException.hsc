@@ -32,6 +32,7 @@ serialised data.
 module GHC.Packing.PackException
     ( PackException(..)
     , decodeEx
+    , isBHExc
     ) where
 
 -- bring in error codes from cbits/Errors.h
@@ -89,3 +90,8 @@ instance Show PackException where
     show P_TypeMismatch   = "Packet data has unexpected type"
 
 instance Exception PackException
+
+-- | internally used: checks if the given code indicates 'P_BLACKHOLE'
+isBHExc :: Int## -> Bool
+isBHExc #{const P_BLACKHOLE}##   = True
+isBHExc e## = False

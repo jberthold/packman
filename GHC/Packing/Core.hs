@@ -67,7 +67,16 @@ tryPack :: Any -> MutableByteArray# s
         -> State# s -> (# State# s , Int #)
 tryPack x# buf# s = case tryPack# x# buf# s of
                       (# s', 0#, size# #) -> (# s', I# size# #)
-                      (# s', e#,   0#  #) -> (# s', throw (decodeEx e#) #)
+                      (# s', e#,   0#  #) 
+                          | isBHExc e# -> repack s'
+                          | otherwise  -> (# s', throw (decodeEx e#) #)
+    where -- packing blocked, eval the blocking closure that we found
+          -- (i.e. block on it) and re-pack afterwards. The first
+          -- StgWord of the ByteArray contains the address (written by
+          -- the packing routine, see BLACKHOLE case in packClosure).
+      repack s = case readAddrArray# buf# 0# s of
+                   (# s', bh #) -> case (addrToAny# bh) of -- or seq it?
+                                     _ -> tryPack x# buf# s'
 
 -- | serialisation primitive, implemented in C. Returns: a
 -- status/error code and size used inside the array

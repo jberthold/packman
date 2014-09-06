@@ -28,9 +28,7 @@ fib x | x <= 1   = 1
 
 -- | duplicate data
 duplicate :: a -> IO a
-duplicate x = (deserialize =<< trySerialize x) `catch`
-              \e -> print (e::PackException) >> putStrLn "retry" >> duplicate x
-
+duplicate x = (deserialize =<< trySerialize x)
 
 testeval :: (Show b) => String -> a -> (a -> b) -> String -> IO ()
 testeval name dat f expected
@@ -61,8 +59,8 @@ main
         let doThread i = 
                 do v <- newEmptyMVar
                    -- note that all threads use fibL. Many calls to
-                   -- trySerialize will block on blackholes (duplicate
-                   -- function will retry in this program)
+                   -- trySerialize will block on blackholes (the core
+                   -- operation will block and retry)
                    forkIO (do testeval (show i)
                                        (cycle fibL) (!!i)
                                        (show (fibL!!(i `mod` length fibL)))

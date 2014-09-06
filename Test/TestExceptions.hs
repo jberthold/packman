@@ -63,7 +63,7 @@ runIt cfg f
 
 -- all configured tests, see below
 mytests :: [ MyTest ]
-mytests = [ evalArray,  packArray, packThreadId, packMVar, packBH,
+mytests = [ evalArray,  packArray, packThreadId, packMVar,
             unpackOther, unpackWrongType, unpackTruncated, unpackGarbled ]
 
 evalArray :: MyTest
@@ -96,21 +96,6 @@ packMVar _ = ("packing an MVar (should be cannotpack)",
               do m <- newEmptyMVar :: IO (MVar Integer)
                  expectException P_CANNOTPACK $ trySerialize m
              )
-
-packBH :: MyTest
-packBH _ = ("should hit a blackhole",
-            do let b = nfib 38 -- (-1) -- will loop, but so far unevaluated
-               m <- newEmptyMVar
-               putMVar m b
-               child <- forkIO $
-                       do n <- takeMVar m
-                          case n of -- poor child thread will evaluate bottom
-                            some -> error $"bottom is " ++ show some ++ "!"
-               yield -- let child thread pick up the trap
-               expectException P_BLACKHOLE
-                              (trySerialize b)
-                               -- `finally` (killThread child)
-         )
 
 unpackOther :: MyTest
 unpackOther _ = ("deserialise other binary's data (binary mismatch)",

@@ -903,10 +903,10 @@ loop:
     case CONSTR_0_2:
         return PackGeneric(p, closure);
 
-    case CONSTR_STATIC:        // We ship indirections to CAFs: They are
-    case CONSTR_NOCAF_STATIC:  // evaluated on each PE if needed
-    case FUN_STATIC:
-    case THUNK_STATIC:
+    case CONSTR_STATIC:        // We pack indirections to CAFs:
+    case CONSTR_NOCAF_STATIC:  // Therefore, we need keepCAFs==rtsTrue
+    case FUN_STATIC:           // (otherwise GC leaves dangling pointers
+    case THUNK_STATIC:         // from original CAF site to the heap)
         // all these are packed with their tag (closure is still tagged)
         PACKETDEBUG(debugBelch("*>~~ Packing a %p (%s) as a PLC\n",
                                closure, info_type_by_ip(info)));
@@ -1029,10 +1029,21 @@ loop:
                         goto loop; // could not block (race condition), retry
                     }
                 }
+                // else (we don't know the packing TSO):
+                // In GUM, we would globalise and pack a FetchMe.
 #endif
-                // TSO not known/library code: just return the code (caller to handle it)
+                // Without global addresses and virtual shared heap, packing
+                // just fails, an error code is returned to Haskell. 
+                // Likewise in library code: would be good to just block on the
+                // blackhole, but there is no way to return to the scheduler.
                 PACKETDEBUG(debugBelch("packing hit a %s at %p (returning).\n",
                                        info_type_by_ip(info), closure));
+
+                // Packing will fail anyway, so write the blackhole address into
+                // the buffer (first word), to enable blocking from Haskell by a
+                // whnf evaluation. Caller to do the rest.
+                *p->buffer = (StgWord) closure;
+
                 return P_BLACKHOLE;
 
             default: // an indirection, pack the indirectee (jump back to start)
