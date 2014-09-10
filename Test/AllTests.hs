@@ -36,8 +36,10 @@ nfib n = let n1 = nfib (n-1)
 runIt :: String -> IO Bool -> TestInstance
 runIt name action
     = TestInstance
-        { run = action >> return (Finished Pass)
-        , name = "printing stuff"
+        { run = action >>= return . Finished . 
+                           (\b -> if b then Pass 
+                                  else Fail "unexpected output (see log)")
+        , name = "Test case " ++ name
         , tags = []
         , options = []
         , setOption = \_ _ -> Right (runIt name action)
@@ -62,7 +64,7 @@ eval_array :: (String, IO Bool)
 eval_array = ("eval. array",
               do let out = show $ take n $ A.elems output
                  putStrLn $ "Evaluated: " ++ out
-                 return (out == "[0,1,2]")
+                 return (out == "[0,2,4]")
              )
 
 pack_array :: (String, IO Bool)
