@@ -813,9 +813,9 @@ StgClosure* tryPackToMemory(StgClosure* graphroot,
     buffer = (StgWord*) stgMallocBytes(trySize, "serialize buffer");
     packedSize = packToBuffer(graphroot, buffer, trySize, tso);
 
-    while (packedSize == P_NOBUFFER && trySize <= 20*ONEMEGABYTE) {
-        // packing failed due to buffer overflow, increase and retry.
-        // Stop retrying at 20 MB (arbitrarily chosen here, could be RTS option)
+    while (packedSize == P_NOBUFFER // packing failed due to buffer overflow
+           && trySize <= RtsFlags.ParFlags.packBufferSize) {
+        // increase and retry (until max, given as RtsFlag)
         stgFree(buffer);
         trySize += ONEMEGABYTE;
         buffer = (StgWord*) stgMallocBytes(trySize, "serialize buffer");
