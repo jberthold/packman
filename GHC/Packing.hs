@@ -205,9 +205,9 @@ the calling thread when the serialisation encounters a blackhole in the
 heap. While blocking is a perfectly acceptable behaviour (making packing
 behave analogous to evaluation wrt. concurrency), the @'trySerialize'@
 variant allows one to explicitly control it and avoid becoming unresponsive.
-
-as well, and differs from @trySerialize@ in that
-it blocks the calling thread when a blackhole is found during serialisation.
+In practice, however, making blackholes observable from Haskell is
+certainly undesirable. Therefore, the primitive operation will return
+the address of the blackhole. This makes it possible to encode blocking on the blackhole at the Haskell level (see code in the @GHC.Packing.Core@ module).
 
 The Haskell layer and its types protect the interface function @'deserialize'@
 from being applied to  grossly wrong data (by checking a fingerprint of the 

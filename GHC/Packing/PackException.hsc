@@ -47,9 +47,10 @@ import Data.Typeable
 -- runtime system or describing errors which can occur within Haskell.
 data PackException =
     -- keep in sync with Errors.h
-    P_SUCCESS      -- ^ no error, ==0. We do not expect this one to occur.
-        -- Error codes from the runtime system:
-        | P_BLACKHOLE    -- ^ RTS: packing hit a blackhole (not blocking thread)
+    P_SUCCESS      -- ^ no error, ==0.
+        -- Internal code, should never be seen by users.
+        | P_BLACKHOLE    -- ^ RTS: packing hit a blackhole.
+        -- Used internally, should probably not be seen by users.
         | P_NOBUFFER     -- ^ RTS: buffer too small
         | P_CANNOTPACK  -- ^ RTS: contains closure which cannot be packed (MVar, TVar)
         | P_UNSUPPORTED  -- ^ RTS: contains unsupported closure type (implementation missing)
