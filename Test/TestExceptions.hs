@@ -29,7 +29,7 @@ catchPackExc io = io `catch` (\e -> putStrLn (show (e::PackException)))
 
 expectException :: (Show a) => PackException -> IO a -> IO Bool
 expectException exception action
-    = do putStrLn ("expect exception " ++ show exception)
+    = do putStrLn ("expect exception:\n" ++ show exception)
          action >>= print
          return False
       `catch` \e -> do putStrLn ("Got: " ++ show e)
@@ -43,16 +43,20 @@ main = do putStrLn "Running all tests"
           -- test data from arguments, avoiding over-optimisation
               arr, arr2, output :: A.Array Int Int
               arr  = A.array (0,127) [ (i,i) | i <- [0..127] ]
-              output = A.amap (2*) arr 
+              output = A.amap (2*) arr
               arr2 = A.listArray (0,2*n-1) (take (2*n) (A.elems arr))
               cfg  = (output, arr2, n)
-          (mapM_ (runIt cfg) mytests) `finally` (rmv "test") 
+          (mapM_ (runIt cfg) mytests) `finally` (rmv testfile)
+
+-- file used for all tests
+testfile :: FilePath
+testfile = "testfile"
 
 type Config = (A.Array Int Int, A.Array Int Int, Int)
 
 type MyTest = Config -> (String, IO Bool)
 
--- run a defined test 
+-- run a defined test
 runIt :: Config -> MyTest -> IO ()
 runIt cfg f
     = do putStrLn $ "Test: " ++ name ++ ": "
@@ -106,30 +110,30 @@ unpackOther _ = ("deserialise other binary's data (binary mismatch)",
 unpackWrongType :: MyTest
 unpackWrongType  (output, arr2, n)
     = ("deserialise wrong type from file (type mismatch)",
-                   do encodeToFile "test" arr2
+                   do encodeToFile testfile arr2
                       expectException P_TypeMismatch
-                       (decodeFromFile "test" :: IO (A.Array Int Double))
+                       (decodeFromFile testfile :: IO (A.Array Int Double))
                   )
 
 unpackTruncated :: MyTest
 unpackTruncated  (output, arr2, n)
     = ("deserialise truncated data. Expected: parse error",
-       do encodeToFile "test" arr2
-          blob <- B.readFile "test"
-          B.writeFile "test" (B.take 50 blob)
+       do encodeToFile testfile arr2
+          blob <- B.readFile testfile
+          B.writeFile testfile (B.take 50 blob)
                -- take more than FingerPrint (4 x Word64)
           expectException P_ParseError
-              (decodeFromFile "test" :: IO (A.Array Int Int))
+              (decodeFromFile testfile :: IO (A.Array Int Int))
       )
 
 unpackGarbled :: MyTest
 unpackGarbled (output, arr2, n)
     = ("deserialise garbled data. Expected: garbled data",
-       do encodeToFile "test" arr2
-          blob <- B.readFile "test"
-          B.writeFile "test" (tamperWith blob)
+       do encodeToFile testfile arr2
+          blob <- B.readFile testfile
+          B.writeFile testfile (tamperWith blob)
           expectException P_GARBLED
-           (decodeFromFile "test" :: IO (A.Array Int Int))
+           (decodeFromFile testfile :: IO (A.Array Int Int))
       )
 
 tamperWith :: B.ByteString -> B.ByteString
