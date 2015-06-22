@@ -48,7 +48,11 @@ import Foreign.Storable ( sizeOf )
 
 -- for dynamic type checks when parsing
 import Data.Typeable (Typeable(..), typeOf)
+#if MIN_VERSION_base(4,8,0)
+import Data.Typeable.Internal (TypeRep(..), typeRepFingerprint)
+#else
 import Data.Typeable.Internal (TypeRep(..))
+#endif
 import qualified GHC.Fingerprint
 
 -- for a hash of the executable. Using GHC.Fingerprint.getFileHash
@@ -221,7 +225,13 @@ data FP = FP Word64 Word64 deriving (Read, Show, Eq)
 -- | comparing 'FP's
 matches :: Typeable a => a -> FP -> Bool
 matches x (FP c1 c2) = f1 == c1 && f2 == c2
-  where  (TypeRep (GHC.Fingerprint.Fingerprint f1 f2) _ _) = typeOf x
+  where  (GHC.Fingerprint.Fingerprint f1 f2) = typeRepFingerprint (typeOf x)
+
+#if ! MIN_VERSION_base(4,8,0)
+-- typeRepFingerprint is provided since base-4.8.0.0
+typeRepFingerprint typeRep = gHCFP
+    where TypeRep ghcFP _ _ = typeRep
+#endif
 
 -- | creating an 'FP' from a GHC 'Fingerprint'
 toFP :: GHC.Fingerprint.Fingerprint -> FP
@@ -229,8 +239,7 @@ toFP (GHC.Fingerprint.Fingerprint f1 f2) = FP f1 f2
 
 -- | creating a type fingerprint
 typeFP :: Typeable a => a -> FP
-typeFP x = toFP fp
-  where  (TypeRep fp _ _) = typeOf x
+typeFP = toFP . typeRepFingerprint . typeOf
 
 -- | Binary instance for fingerprint data (encoding TypeRep and
 --   executable in binary-encoded @Serialized a@)

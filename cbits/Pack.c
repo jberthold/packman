@@ -166,7 +166,8 @@ STATIC_INLINE StgInfoTable* getClosureInfo(StgClosure* node, StgInfoTable* info,
                                            nat *nonptrs, nat *vhs);
 #ifdef LIBRARY_CODE
 // remains local when code is stand-alone for the library
-STATIC_INLINE rtsBool isBlackhole(StgClosure* node);
+STATIC_INLINE rtsBool pmIsBlackhole(StgClosure* node);
+#define isBlackHole pmIsBlackHole,
 #else
 // if compiling for the RTS: used in other files, declared in Parallel.h
 // rtsBool isBlackhole(StgClosure* node);
@@ -462,10 +463,7 @@ STATIC_INLINE rtsBool roomToPack(PackState* p, nat size)
 
 // quick test for blackholes. Available somewhere else?
 
-#ifdef LIBRARY_CODE
-STATIC_INLINE
-#endif
-rtsBool isBlackhole(StgClosure* node) {
+rtsBool pmIsBlackhole(StgClosure* node) {
     // since ghc-7.0, blackholes are used as indirections. inspect indirectee.
     if(((StgInfoTable*)get_itbl(UNTAG_CLOSURE(node)))->type == BLACKHOLE) {
         StgClosure* indirectee = ((StgInd*)node)->indirectee;
