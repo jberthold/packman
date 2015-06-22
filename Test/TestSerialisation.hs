@@ -55,16 +55,16 @@ main
    = do hSetBuffering stdout NoBuffering
 
         args <- getArgs
-	let u = if (null args) then 40 else read (head args)
+        let u = if (null args) then 40 else read (head args)
         putStrLn "Test program for serialisation"
         putStrLn "Evaluating some fib expressions before and after packing"
         let input  = [20..u]
-	    flt    =  filter (> 10000) 
-	    fibL   = (flt . map fib) input
+            flt    =  filter (> 10000) 
+            fibL   = (flt . map fib) input
 -- [10946,17711,28657,46368,75025,121393,196418,317811,514229,832040,1346269]
 
         putStrLn "normal evaluation (take 3), should be \n[10946,17711,28657]"
-	putStrLn (show $ take 3 fibL)
+        putStrLn (show $ take 3 fibL)
 
         testeval "packing one part" fibL (take 5) 
                      "[10946,17711,28657,46368,75025]"
@@ -76,8 +76,8 @@ main
 
         let f3 x a b c y d = head $ map (map fib) 
                              [[(x+a+b+c+d)-const .. (y+a+b+c+d)-const ]]
-	    const  = head fibL - 1
-	    f3'    = f3 (head fibL) 0 0 
+            const  = head fibL - 1
+            f3'    = f3 (head fibL) 0 0 
         const `seq` f3' `seq` 
          testeval "packing a list function (2 arg.s, 1 supplied)"
                   f3' (\f -> take 3 (flt (f 0 (u+const) 0)))
