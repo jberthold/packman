@@ -1,5 +1,5 @@
 name:                packman
-version:             0.1
+version:             0.2
 synopsis:            Serialization library for GHC
 description:         This package provides Haskell data serialisation 
                      independent of evaluation, by accessing the Haskell heap
@@ -14,7 +14,7 @@ author:              Michael Budde, Ásbjørn V. Jøkladal, Jost Berthold
 maintainer:          jb.diku@gmail.com
 build-type:          Simple
 cabal-version:       >= 1.18
-tested-with:         GHC==7.8.2, GHC==7.8.3
+tested-with:         GHC==7.8.2, GHC==7.8.3, GHC==7.10.2
 extra-source-files:  cbits/Wrapper.cmm
                      cbits/Pack.c
                      cbits/Errors.h
