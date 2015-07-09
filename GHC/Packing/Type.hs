@@ -229,7 +229,7 @@ matches x (FP c1 c2) = f1 == c1 && f2 == c2
 
 #if ! MIN_VERSION_base(4,8,0)
 -- typeRepFingerprint is provided since base-4.8.0.0
-typeRepFingerprint typeRep = gHCFP
+typeRepFingerprint typeRep = ghcFP
     where TypeRep ghcFP _ _ = typeRep
 #endif
 
