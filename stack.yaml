@@ -1,0 +1,10 @@
+flags:
+  packman:
+    debug: false
+packages:
+- '.'
+extra-deps: []
+resolver: lts-2.22
+
+#docker:
+#  enable: true
