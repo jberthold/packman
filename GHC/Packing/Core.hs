@@ -5,9 +5,9 @@
 {-| 
 
 Module      : GHC.Packing
-Copyright   : (c) Jost Berthold, 2010-2014,
+Copyright   : (c) Jost Berthold, 2010-2015,
 License     : BSD3
-Maintainer  : jb.diku@gmail.com
+Maintainer  : jost.berthold@gmail.com
 Stability   : experimental
 Portability : no (depends on GHC internals)
 
@@ -41,13 +41,13 @@ import Control.Exception(throw)
 trySerialize :: a -> IO (Serialized a) -- throws PackException (RTS)
 trySerialize x = trySerializeWith x defaultBufSize
 
--- | A default buffer size, used when using the old API
+-- | default buffer size used by trySerialize
 defaultBufSize :: Int
 defaultBufSize = 10 * 2^20 -- 10 MB
 
 -- | Extended interface function: Allocates a buffer of given size (in
 -- bytes), serialises data into it, then truncates the buffer to the
--- actually required size before returning it (as @'Serialized' a@)
+-- required size before returning it (as @'Serialized' a@)
 trySerializeWith :: a -> Int -> IO (Serialized a) -- using instance PrimMonad IO
 trySerializeWith dat bufsize
     = do buf <- newByteArray bufsize

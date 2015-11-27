@@ -4,9 +4,9 @@
 {- | 
 
 Module      : GHC.Packing
-Copyright   : (c) Jost Berthold, 2010-2014,
+Copyright   : (c) Jost Berthold, 2010-2015,
 License     : BSD3
-Maintainer  : jb.diku@gmail.com
+Maintainer  : jost.berthold@gmail.com
 Stability   : experimental
 Portability : no (depends on GHC internals)
 
@@ -31,11 +31,12 @@ heap data:
 The routine will throw a 'PackException' if an error occurs inside the
 C code which accesses the Haskell heap (see @'PackException'@).
 In presence of concurrent threads, another thread might be evaluating
-data /referred to/ by the data to be serialised.  It would be nice to
-/block/ the calling thread in this case, but this is not possible in
-the library version (see <#background Background Information> below).
-'trySerialize' variant will instead signal the condition as
-'PackException' 'P_BLACKHOLE'.
+data /referred to/ by the data to be serialised. In this case, the calling
+thread will /block/ on the ongoing evaluation and continue when evaluated
+data is available.
+Internally, there is a 'PackException' 'P_BLACKHOLE' to signal the
+condition, but it is hidden inside the core library
+(see <#background Background Information> below).
 
 The inverse operation to serialisation is
 
@@ -191,27 +192,29 @@ and better usability.
 The original primitive @'serialize'@ is modified and now returns error
 codes, leading to the following type (again paraphrasing):
 
-> serialize# :: a -> IO ( Int# , ByteArray# )
+> trySerialize# :: a -> IO ( Int# , ByteArray# )
 
 where the @Int#@ encodes potential error conditions returned by the runtime.
 
-A second primitive operation has been defined, which considers the presence
-of concurrent evaluations of the serialised data by other threads:
+A second primitive operation has been defined, which uses a pre-allocated
+@ByteArray#@
 
-> trySerialize# :: a -> IO ( Int# , ByteArray# )
+> trySerializeWith# :: a -> ByteArray# -> IO ( Int# , ByteArray# )
 
-Further to returning error codes, this primitive operation will not block
+Further to returning error codes, the newer primitive operation do not block
 the calling thread when the serialisation encounters a blackhole in the
-heap. While blocking is a perfectly acceptable behaviour (making packing
-behave analogous to evaluation wrt. concurrency), the @'trySerialize'@
-variant allows one to explicitly control it and avoid becoming unresponsive.
+heap.
+It would be possible to observe the existence of blackholes from Haskell by
+the return code of these primitive operation. This could - in theory - be
+used to explicitly control and avoid blocking (avoiding unresponsive behaviour).
 In practice, however, making blackholes observable from Haskell is
-certainly undesirable. Therefore, the primitive operation will return
-the address of the blackhole. This makes it possible to encode blocking on the blackhole at the Haskell level (see code in the @GHC.Packing.Core@ module).
+certainly undesirable. The primitive operations return the address of the
+blackhole, and the caller will block on this blackhole at 
+the Haskell level (see code in the @GHC.Packing.Core@ module).
 
 The Haskell layer and its types protect the interface function @'deserialize'@
 from being applied to  grossly wrong data (by checking a fingerprint of the 
-executable and the expected type), but deserialisation is fragile by nature
+executable and the expected type), but deserialisation is still rather fragile 
 (unpacking code pointers and data).
 The primitive operation in the runtime system will only detect grossly wrong
 formats, and the primitive will return error code @'P_GARBLED'@ when data

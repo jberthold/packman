@@ -1,6 +1,6 @@
 module Main where
  
-import GHC.Packing -- Data.Serialize.Packman
+import GHC.Packing
 import Control.Exception
 
 data Foo = A | B | C | D deriving Show

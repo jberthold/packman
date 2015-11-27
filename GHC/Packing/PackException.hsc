@@ -3,9 +3,9 @@
 {-| 
 
 Module      : GHC.Packing.PackException
-Copyright   : (c) Jost Berthold, 2010-2014,
+Copyright   : (c) Jost Berthold, 2010-2015,
 License     : BSD3
-Maintainer  : jb.diku@gmail.com
+Maintainer  : jost.berthold@gmail.com
 Stability   : experimental
 Portability : no (depends on GHC internals)
 
@@ -13,19 +13,20 @@ Exception type for packman library, using magic constants #include'd
 from a C header file shared with the foreign primitive operation code.
 
 'PackException's can occur at Haskell level or in the foreign primop.
-The Haskell-level exceptions all occur when reading in
-'GHC.Packing.Serialised' data, and are:
 
-* 'P_BinaryMismatch': the serialised data have been produced by a
+All Haskell-level exceptions are cases of invalid data when /reading/
+and /deserialising/ 'GHC.Packing.Serialised' data:
+
+* 'P_BinaryMismatch': serialised data were produced by a
 different executable (must be the same binary).
-* 'P_TypeMismatch': the serialised data have the wrong type
+* 'P_TypeMismatch': serialised data have the wrong type
 * 'P_ParseError': serialised data could not be parsed (from binary or
 text format)
 
-The other exceptions are return codes of the foreign primitive
-operation, and indicate errors at the C level. Most of them occur when
-serialising data; the exception is 'P_GARBLED' which indicates corrupt
-serialised data.
+The exceptions caused by the foreign primops (return codes) 
+indicate errors at the C level. Most of them can occur when
+serialising data; the exception is 'P_GARBLED' which indicates that
+serialised data is garbled.
 
 -}
 
@@ -50,20 +51,21 @@ data PackException =
     P_SUCCESS      -- ^ no error, ==0.
         -- Internal code, should never be seen by users.
         | P_BLACKHOLE    -- ^ RTS: packing hit a blackhole.
-        -- Used internally, should probably not be seen by users.
+        -- Used internally, not passed to users.
         | P_NOBUFFER     -- ^ RTS: buffer too small
         | P_CANNOTPACK  -- ^ RTS: contains closure which cannot be packed (MVar, TVar)
         | P_UNSUPPORTED  -- ^ RTS: contains unsupported closure type (implementation missing)
         | P_IMPOSSIBLE   -- ^ RTS: impossible case (stack frame, message,...RTS bug!)
         | P_GARBLED       -- ^ RTS: corrupted data for deserialisation
+
         -- Error codes from inside Haskell
         | P_ParseError     -- ^ Haskell: Packet data could not be parsed
         | P_BinaryMismatch -- ^ Haskell: Executable binaries do not match
         | P_TypeMismatch   -- ^ Haskell: Packet data encodes unexpected type
      deriving (Eq, Ord, Typeable)
 
--- | decode an 'Int#' to a @'PackException'@. Magic constants are read
--- from file /cbits/Errors.h/.
+-- | decodes an 'Int#' to a @'PackException'@. Magic constants are read
+-- from file /cbits///Errors.h/.
 decodeEx :: Int## -> PackException
 decodeEx #{const P_SUCCESS}##     = P_SUCCESS -- unexpected
 decodeEx #{const P_BLACKHOLE}##   = P_BLACKHOLE
@@ -92,7 +94,7 @@ instance Show PackException where
 
 instance Exception PackException
 
--- | internally used: checks if the given code indicates 'P_BLACKHOLE'
+-- | internal: checks if the given code indicates 'P_BLACKHOLE'
 isBHExc :: Int## -> Bool
 isBHExc #{const P_BLACKHOLE}##   = True
 isBHExc e## = False

@@ -1,6 +1,3 @@
-{-
-  Some tests to 
--}
 -- module TestSerialisation(tests)
 --    where
 
