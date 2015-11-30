@@ -1,12 +1,47 @@
 name:                packman
 version:             0.2
 synopsis:            Serialization library for GHC
-description:         This package provides Haskell data serialisation 
-                     independent of evaluation, by accessing the Haskell heap
-                     using a foreign primitive operation. Any Haskell data can
-                     be serialised and later deserialised in the same or a new
-                     run of the same program (that means, the same executable
-                     file).
+
+description:
+  This package provides Haskell data serialisation independent of
+  evaluation, by accessing the Haskell heap using a foreign primitive
+  operation.
+  .
+  The library provides an operation to @serialize@ Haskell heap data,
+  and the inverse @deserialize@ operation
+  .
+  > trySerialize :: a -> IO (Serialized a)
+  > deserialize :: Serialized a -> IO a
+  .
+  Any Haskell data apart from mutable data structures (@MVar@s and @TVar@s)
+  can be serialised and later deserialised during the same run or loaded
+  into a new run of the same program (the same executable file).
+  .
+  The data type @Serialized a@ includes a phantom type @a@ to ensure
+  type safety within the same program run. Type @a@ can be
+  polymorphic (at compile time, that is) when @Serialized a@ is not used
+  apart from being argument to @deserialize@. When data are externalised
+  (written to disk or communicated over the network), the type @a@ needs
+  to be monomorphic because he provided instances of @Binary@, @Read@ and
+  @Show@ require @Typeable@ context.
+  .
+  Packman serialisation is /orthogonal/ to evaluation, data are packed
+  in their current evaluation state, potentially as unevaluated thunks
+  which capture other data. Therefore, there can be cases where a
+  mutable data structure is captured by a thunk, and lead to
+  serialisation failures (typically related to lazy I/O).
+  .
+  The serialisation routine will throw a @PackException@ if an error occurs
+  inside the C code which accesses the Haskell heap, if a mutable data
+  structure is serialised, or if the serialised data is too large (for details
+  see @trySerializeWith@).
+  In presence of concurrent threads, another thread might be evaluating
+  data /referred to/ by the data to be serialised. In this case, the calling
+  thread will /block/ on the ongoing evaluation and continue when evaluated
+  data is available.
+  Internally, there is a @PackException@ @P_BLACKHOLE@ to signal the
+  condition, but it is hidden inside the core library
+
 category:            Serialization, Data, GHC
 license:             BSD3
 license-file:        LICENSE

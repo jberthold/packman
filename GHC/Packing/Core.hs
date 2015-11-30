@@ -34,10 +34,11 @@ import Control.Exception(throw)
 #error This module assumes GHC-7.8 or above
 #endif
 
--- | Non-blocking serialisation routine using 'PackException's to
--- signal errors. This version does not block the calling thread when
--- a black hole is found, but instead signals the condition by the
--- 'P_BLACKHOLE' exception.
+-- | Serialises its argument (in current evaluation state, as a thunk).
+-- May block if the argument captures (blackhole'd) data under evaluation,
+-- may throw 'PackException's to signal errors.
+-- This version uses a default buffer of 10MB (see 'trySerializeWith'
+-- for a version with flexible buffer size).
 trySerialize :: a -> IO (Serialized a) -- throws PackException (RTS)
 trySerialize x = trySerializeWith x defaultBufSize
 
@@ -45,7 +46,7 @@ trySerialize x = trySerializeWith x defaultBufSize
 defaultBufSize :: Int
 defaultBufSize = 10 * 2^20 -- 10 MB
 
--- | Extended interface function: Allocates a buffer of given size (in
+-- | Extended serialisation interface: Allocates a buffer of given size (in
 -- bytes), serialises data into it, then truncates the buffer to the
 -- required size before returning it (as @'Serialized' a@)
 trySerializeWith :: a -> Int -> IO (Serialized a) -- using instance PrimMonad IO
