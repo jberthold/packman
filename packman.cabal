@@ -22,8 +22,8 @@ description:
   Type @a@ can be polymorphic (at compile time, that is) when @Serialized a@
   is not used apart from being argument to @deserialize@.
   When data are externalised (written to disk or communicated over the
-  network), @a@ needs to be monomorphic because he provided instances of
-  @Binary@, @Read@ and @Show@ require @Typeable@ context.
+  network) using the provided instances of @Binary@ or @Read@ and @Show@,
+  @a@ needs to be monomorphic because they require @Typeable@ context.
   The instances for @Show@ and @Read@ satisfy @read . show == id@.
   .
   Packman serialisation is /orthogonal/ to evaluation, heap data are
