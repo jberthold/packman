@@ -3,38 +3,38 @@ version:             0.3.0
 synopsis:            Serialization library for GHC
 
 description:
-  This package provides Haskell data serialisation independent of
-  evaluation, by accessing the Haskell heap using a foreign primitive
-  operation.
+  This package provides Haskell data serialisation independent of evaluation,
+  by accessing the Haskell heap using foreign primitive operations.
+  Any Haskell data structure  apart from mutable data structures (@MVar@s
+  and @TVar@s) can be serialised and later deserialised during the same run,
+  or loaded into a new run, of the same program (the same executable file).
   .
-  The library provides an operation to @serialize@ Haskell heap data,
-  and the inverse @deserialize@ operation
+  The library provides operations to @serialize@ Haskell heap data,
+  and to @deserialize@ it:
   .
-  > trySerialize :: a -> IO (Serialized a)
+  > trySerializeWith :: a -> Int -> IO (Serialized a) -- Int is maximum buffer size to use
+  > trySerialize :: a -> IO (Serialized a)            -- uses default (maximum) buffer size
   > deserialize :: Serialized a -> IO a
   .
-  Any Haskell data apart from mutable data structures (@MVar@s and @TVar@s)
-  can be serialised and later deserialised during the same run or loaded
-  into a new run of the same program (the same executable file).
+  The data type @Serialized a@ is an opaque representation of serialised
+  Haskell data (it contains a @ByteArray@).
+  A phantom type @a@ ensures type safety within the same program run.
+  Type @a@ can be polymorphic (at compile time, that is) when @Serialized a@
+  is not used apart from being argument to @deserialize@.
+  When data are externalised (written to disk or communicated over the
+  network), @a@ needs to be monomorphic because he provided instances of
+  @Binary@, @Read@ and @Show@ require @Typeable@ context.
+  The instances for @Show@ and @Read@ satisfy @read . show == id@.
   .
-  The data type @Serialized a@ includes a phantom type @a@ to ensure
-  type safety within the same program run. Type @a@ can be
-  polymorphic (at compile time, that is) when @Serialized a@ is not used
-  apart from being argument to @deserialize@. When data are externalised
-  (written to disk or communicated over the network), the type @a@ needs
-  to be monomorphic because he provided instances of @Binary@, @Read@ and
-  @Show@ require @Typeable@ context.
-  .
-  Packman serialisation is /orthogonal/ to evaluation, data are packed
-  in their current evaluation state, potentially as unevaluated thunks
-  which capture other data. Therefore, there can be cases where a
-  mutable data structure is captured by a thunk, and lead to
-  serialisation failures (typically related to lazy I/O).
+  Packman serialisation is /orthogonal/ to evaluation, heap data are
+  serialised /in their current state of evaluation/, they might be entirely
+  unevaluated (a thunk) or only partially evaluated (containing thunks).
+  Therefore, there can be cases where a mutable data structure is captured by
+  a thunk, and lead to serialisation failures (typically related to lazy I/O).
   .
   The serialisation routine will throw a @PackException@ if an error occurs
   inside the C code which accesses the Haskell heap, if a mutable data
-  structure is serialised, or if the serialised data is too large (for details
-  see @trySerializeWith@).
+  structure is serialised, or if the serialised data is too large.
   In presence of concurrent threads, another thread might be evaluating
   data /referred to/ by the data to be serialised. In this case, the calling
   thread will /block/ on the ongoing evaluation and continue when evaluated
