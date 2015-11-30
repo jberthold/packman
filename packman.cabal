@@ -57,9 +57,10 @@ extra-source-files:  cbits/Wrapper.cmm
                      cbits/GHCFunctions.h
                      pack.old
 
-flag Debug
-  description:       Enable debug support
+flag debug
+  manual:            True
   default:           False
+  description:       Enable debug support
 -- we abuse flags "prof(p)" and "sparks(r)" and use "sanity(S)"
 
 library
