@@ -48,7 +48,7 @@ license-file:        LICENSE
 author:              Michael Budde, Ásbjørn V. Jøkladal, Jost Berthold
 maintainer:          jost.berthold@gmail.com
 build-type:          Simple
-cabal-version:       >= 1.20
+cabal-version:       >= 1.18
 tested-with:         GHC==7.8.2, GHC==7.8.3, GHC==7.10.2
 extra-source-files:  cbits/Wrapper.cmm
                      cbits/Pack.c
