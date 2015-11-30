@@ -167,7 +167,7 @@ STATIC_INLINE StgInfoTable* getClosureInfo(StgClosure* node, StgInfoTable* info,
 #ifdef LIBRARY_CODE
 // remains local when code is stand-alone for the library
 STATIC_INLINE rtsBool pmIsBlackhole(StgClosure* node);
-#define isBlackHole pmIsBlackHole,
+#define isBlackhole pmIsBlackhole
 #else
 // if compiling for the RTS: used in other files, declared in Parallel.h
 // rtsBool isBlackhole(StgClosure* node);
@@ -463,7 +463,10 @@ STATIC_INLINE rtsBool roomToPack(PackState* p, nat size)
 
 // quick test for blackholes. Available somewhere else?
 
-rtsBool pmIsBlackhole(StgClosure* node) {
+#ifdef LIBRARY_CODE
+STATIC_INLINE
+#endif
+rtsBool isBlackhole(StgClosure* node) {
     // since ghc-7.0, blackholes are used as indirections. inspect indirectee.
     if(((StgInfoTable*)get_itbl(UNTAG_CLOSURE(node)))->type == BLACKHOLE) {
         StgClosure* indirectee = ((StgInd*)node)->indirectee;
@@ -2551,7 +2554,8 @@ print:
 
         case MVAR_CLEAN:
         case MVAR_DIRTY:
-            if (((StgMVar *)p)->value != &stg_END_TSO_QUEUE_closure)
+            // follow MVar contents unless empty (END_TSO_QUEUE is magic)
+            if (((StgMVar *)p)->value != (StgClosure*) END_TSO_QUEUE)
                 graphFingerPrint_(fp, visited, ((StgMVar *)p)->value);
             break;
 
