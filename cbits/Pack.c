@@ -967,7 +967,9 @@ loop:
         goto unsupported;
 
     case IND:
+#if __GLASGOW_HASKELL__ < 801
     case IND_PERM:
+#endif
     case IND_STATIC:
         // clearly a bug!
         barf("Pack: found IND_... after shorting out indirections %d (%s)",
@@ -2266,27 +2268,47 @@ StgClosure* createListNode(Capability *cap, StgClosure *head, StgClosure *tail) 
   Will only be called inside this module.
 */
 
-/* this array has to be kept in sync with includes/ClosureTypes.h */
+/* this array has to be kept in sync with includes/ClosureTypes.h.
+ * For backwards compatibility of packman, changes need to be worked in
+ * via CPP (or multipurpose code where possible).
+ * 
+ * Changes are identified by minor version, we cannot be more precise than
+ * that, but non-released version numbers (odd minor version) are included.
+ *
+ * Change log:
+ * 7.08.x - start state
+ * 7.09   - addition of small array closures (61-64)
+ * 8.01   - removal of IND_PERM (was 30), subsequent numbers shifting up
+ */
 #if __GLASGOW_HASKELL__ == 708
 # if !(N_CLOSURE_TYPES == 61 )
 # error Wrong closure type count in fingerprint array. Check code.
 # endif
-#elif __GLASGOW_HASKELL__ > 708
+#elif __GLASGOW_HASKELL__ >= 709 && __GLASGOW_HASKELL__ <= 800
 # if !(N_CLOSURE_TYPES == 65 )
+# error Wrong closure type count in fingerprint array. Check code.
+# endif
+#elif __GLASGOW_HASKELL__ >= 801
+# if !(N_CLOSURE_TYPES == 64 )
 # error Wrong closure type count in fingerprint array. Check code.
 # endif
 #endif
 static char* fingerPrintChar =
-  "0ccccccCC"    /* INVALID CONSTRs (0-8) */
-  "fffffff"      /* FUNs (9-15) */
-  "ttttttt"      /* THUNKs (16-23) */
-  "TBAPP___"     /* SELECTOR BCO AP PAP AP_STACK INDs (24-31) */
-  "RRRRFFFF"     /* RETs FRAMEs (32-39) */
-  "*@MMT"        /* BQ BLACKHOLE MVARs TVAR (40-43) */
-  "aAAAAmmwppXS" /* ARRAYs MUT_VARs WEAK PRIM MUT_PRIM TSO STACK (44-55) */
-  "&FFFW"        /* TREC (STM-)FRAMEs WHITEHOLE (56-60)*/
+    "0ccccccCC"    // INVALID CONSTRs (0-8)
+    "fffffff"      // FUNs (9-15)
+    "ttttttt"      // THUNKs (16-22)
+    "TBAPP"        // SELECTOR BCO AP PAP AP_STACK
+#if __GLASGOW_HASKELL__ >= 801
+    "__"           // INDs (2)
+#else
+    "___"          // INDs (3)
+#endif
+    "RRRRFFFF"     // RETs (4) FRAMEs (4)
+    "*@MMT"        // BQ BLACKHOLE MVARs TVAR
+    "aAAAAmmwppXS" // ARRAYs(1+4) MUT_VARs(2) WEAK PRIM MUT_PRIM TSO STACK
+    "&FFFW"        // TREC (STM-)FRAMEs(3) WHITEHOLE
 #if __GLASGOW_HASKELL__ >= 708
-  "ZZZZ"         /* SmallArr (61-64) */
+    "ZZZZ"         // SmallArr(4)
 #endif
   ;
 
@@ -2522,7 +2544,9 @@ print:
             break;
 
         case IND:
+#if __GLASGOW_HASKELL__ < 801
         case IND_PERM:
+#endif
         case IND_STATIC:
             /* do not print the '_' for indirections */
             fp[len] = '\0';
