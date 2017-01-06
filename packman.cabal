@@ -121,8 +121,8 @@ test-suite testexceptions
     ghc-options:     -debug -optc-g -optc-DDEBUG
 
 test-suite alltests
-  type:              detailed-0.9
-  test-module:       AllTests
+  type:              exitcode-stdio-1.0
+  main-is:           AllTests.hs
   hs-source-dirs:    Test
   build-depends:     base >= 4.7,
                      directory >= 1.2,
@@ -157,8 +157,8 @@ test-suite testmthread
     ghc-options:     -with-rtsopts=-N4 -threaded
 
 test-suite quickchecktest
-  type:              detailed-0.9
-  test-module:       QCTest
+  type:              exitcode-stdio-1.0
+  main-is:       QCTest.hs
   hs-source-dirs:    Test
   build-depends:     base >= 4.7,
                      directory >= 1.2,

@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards, DeriveFunctor #-}
-module QCTest(tests) where
+--module QCTest(tests) where
 
 import Distribution.TestSuite
 import Test.QuickCheck
@@ -11,10 +11,29 @@ import Control.Applicative
 
 import GHC.Packing
 
+-- alternative test entry point for cabal testing
+main :: IO ()
+main = do
+ testResults <- mapM (evaluate . uncurry (runQC 10)) mytests
+ if Prelude.all snd testResults
+   then return ()
+   else error $ "failed tests: " ++ (show testResults)
+  where
+    evaluate :: TestInstance -> IO (String, Bool)
+    evaluate t = do
+      (Finished r) <- run t
+      r' <- evaluate' r
+      return $ (name t, r')
+        where
+          evaluate' Pass = return True
+          evaluate' (Fail m)  = putStrLn m >> return False
+          evaluate' (Error m)  = putStrLn m >> error m
+
 -- use "detailed" interface: defining test instances
 tests :: IO [Test]
-tests = mapM (return . Test . uncurry (runQC 10))
-        [boldTrees, foldmap square (+) 0, foldmapforce square (+) 0 ]
+tests = mapM (return . Test . uncurry (runQC 10)) mytests
+
+mytests = [boldTrees, foldmap square (+) 0, foldmapforce square (+) 0 ]
 
 square x = x*x
 

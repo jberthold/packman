@@ -1,8 +1,7 @@
 {-
   Some tests to verify that serialisation works as expected
 -}
-module AllTests(tests)
-    where
+--module AllTests (tests) where
 
 import GHC.Packing
 
@@ -44,6 +43,16 @@ runIt name action
         , options = []
         , setOption = \_ _ -> Right (runIt name action)
         }
+
+-- alternative test entry point for cabal testing, discard as soon as the detailed test type worksmain :: IO ()
+main = do
+ testResults <- mapM evaluate mytests
+ if all snd testResults
+   then return ()
+   else error $ "failed tests: " ++ (show testResults)
+  where
+    evaluate :: (String, IO Bool) -> IO (String, Bool)
+    evaluate (name, test) = test >>= \b -> return (name, b)
 
 tests :: IO [ Test ]
 tests = do putStrLn "Running all tests"
