@@ -46,10 +46,17 @@
 #include <string.h> // memset
 #endif
 
-#if __GLASGOW_HASKELL__ < 711
 // programming against internal types is great, isn't it? :-P
+#if __GLASGOW_HASKELL__ < 711
 #define StgArrBytes StgArrWords
 #endif
+// and sometimes they did not appear very internal, just old...
+#if __GLASGOW_HASKELL__ < 801
+#define bool  rtsBool
+#define true  rtsTrue
+#define false rtsFalse
+#endif
+
 
 #ifdef DEBUG
 #define DBG_HEADROOM 1
@@ -117,17 +124,17 @@ extern const StgInfoTable BASE_SYM[];
 // Could use WSDeQue from the RTS, but we don't need its thread-safety
 typedef struct ClosureQ_ {
     StgClosure** queue;
-    nat size; // all in units of StgClosure*
-    nat head;
-    nat tail;
+    uint32_t size; // all in units of StgClosure*
+    uint32_t head;
+    uint32_t tail;
 } ClosureQ;
 
 // packing state: buffer, queue, offset table
 typedef struct PackState_ {
     StgWord  *buffer;
-    nat       size;     // buffer size in StgWords
-    nat       position; // position in buffer, in StgWords
-    // nat unpacked_size;  // record unpacked size? only interesting to debug
+    uint32_t  size;     // buffer size in StgWords
+    uint32_t  position; // position in buffer, in StgWords
+ // uint32_t unpacked_size;// record unpacked size? only interesting to debug
 #ifndef LIBRARY_CODE
     StgTSO *tso;        // in-RTS version: may block when accessing a blackhole
 #endif
@@ -144,15 +151,15 @@ static void init(void) __attribute__((constructor));
 #ifdef LIBRARY_CODE
 static PackState* initPacking(StgArrBytes *mutArr);
 #else
-static PackState* initRtsPacking(StgWord *buffer, nat size, StgTSO *tso);
+static PackState* initRtsPacking(StgWord *buffer, uint32_t size, StgTSO *tso);
 #endif
 static void donePacking(PackState *state);
 
 // closure queue
-static ClosureQ* initClosureQ(nat size);
+static ClosureQ* initClosureQ(uint32_t size);
 static void freeClosureQ(ClosureQ* q);
-STATIC_INLINE rtsBool queueEmpty(ClosureQ* q);
-STATIC_INLINE nat queueSize(ClosureQ* q);
+STATIC_INLINE bool queueEmpty(ClosureQ* q);
+STATIC_INLINE uint32_t queueSize(ClosureQ* q);
 static void queueClosure(ClosureQ* q, StgClosure *closure);
 static StgClosure *deQueueClosure(ClosureQ* q);
 
@@ -163,19 +170,19 @@ static StgClosure *deQueueClosure(ClosureQ* q);
 // little helpers:
 STATIC_INLINE void registerOffset(PackState* p, StgClosure *closure);
 STATIC_INLINE StgWord offsetFor(PackState* p, StgClosure *closure);
-STATIC_INLINE rtsBool roomToPack(PackState* p, nat size);
+STATIC_INLINE bool roomToPack(PackState* p, uint32_t size);
 
 // closure information
 STATIC_INLINE StgInfoTable* getClosureInfo(StgClosure* node, StgInfoTable* info,
-                                           nat *size, nat *ptrs,
-                                           nat *nonptrs, nat *vhs);
+                                           uint32_t *size, uint32_t *ptrs,
+                                           uint32_t *nonptrs, uint32_t *vhs);
 #ifdef LIBRARY_CODE
 // remains local when code is stand-alone for the library
-STATIC_INLINE rtsBool pmIsBlackhole(StgClosure* node);
+STATIC_INLINE bool pmIsBlackhole(StgClosure* node);
 #define isBlackhole pmIsBlackhole
 #else
 // if compiling for the RTS: used in other files, declared in Parallel.h
-// rtsBool isBlackhole(StgClosure* node);
+// bool isBlackhole(StgClosure* node);
 #endif
 
 /************************
@@ -188,7 +195,7 @@ int pmtryPackToBuffer(StgClosure* closure, StgArrBytes* mutArr);
 #else
 // in-RTS version: packToBuffer, declared in Parallel.h
 // int packToBuffer(StgClosure* closure,
-//                  StgWord *buffer, nat bufsize, StgTSO *caller);
+//                  StgWord *buffer, uint32_t bufsize, StgTSO *caller);
 // serialisation into a Haskell Byte array, returning error codes on failure
 // StgClosure* tryPackToMemory(StgClosure* graphroot, StgTSO* tso,
 //                             Capability* cap);
@@ -232,7 +239,8 @@ static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap);
 
 // helper function to find next pointer (filling in pointers)
 STATIC_INLINE void locateNextParent(ClosureQ* q, StgClosure **parentP,
-                                    nat* pptrP, nat* pptrsP, nat* pvhsP);
+                                    uint32_t* pptrP, uint32_t* pptrsP,
+                                    uint32_t* pvhsP);
 
 // core unpacking function
 static  StgClosure* UnpackClosure (ClosureQ* q, HashTable* offsets,
@@ -283,7 +291,7 @@ StgInd stg_system_tso;
 #define MAX_FINGER_PRINT_LEN  1023
 static void graphFingerPrint(char* fp, StgClosure *graphroot);
 
-static void checkPacket(StgWord* buffer, nat size);
+static void checkPacket(StgWord* buffer, uint32_t size);
 #endif
 
 /***************************************************************
@@ -292,7 +300,7 @@ static void checkPacket(StgWord* buffer, nat size);
 static void init(void) {
     // we must retain all CAFs, as packet data might refer to it.
     // This variable lives in Storage.c, inhibits GC for CAFs.
-    keepCAFs = rtsTrue;
+    keepCAFs = true;
 }
 
 /***************************************************************
@@ -324,7 +332,7 @@ static PackState* initPacking(StgArrBytes *mutArr) {
 }
 #else
 // in-RTS version uses a raw buffer instead of an array, and carries a tso
-static PackState* initRtsPacking(StgWord *buffer, nat size, StgTSO *tso) {
+static PackState* initRtsPacking(StgWord *buffer, uint32_t size, StgTSO *tso) {
     PackState *ret;
 
     ret = (PackState*) stgMallocBytes(sizeof(PackState), "pack state");
@@ -355,7 +363,7 @@ static void donePacking(PackState *state) {
 }
 
 // initialise a closure queue for "size" many closures
-static ClosureQ* initClosureQ(nat size) {
+static ClosureQ* initClosureQ(uint32_t size) {
     ClosureQ* ret;
     ret = (ClosureQ*) stgMallocBytes(sizeof(ClosureQ), "cl.queue");
     ret->queue = (StgClosure**)
@@ -372,19 +380,19 @@ static void freeClosureQ(ClosureQ* q) {
 }
 
 // queue empty if head == tail
-STATIC_INLINE rtsBool queueEmpty(ClosureQ* q) {
+STATIC_INLINE bool queueEmpty(ClosureQ* q) {
     return (q->head == q->tail);
 }
 
 // compute size from distance between head and tail (with wrap-around)
-STATIC_INLINE nat queueSize(ClosureQ* q) {
+STATIC_INLINE uint32_t queueSize(ClosureQ* q) {
     // queue can wrap around
     int span = q->head - q->tail;
 
     ASSERT(span < (int) q->size && 0 - (int) q->size < span);
 
     if (span >= 0) {
-        return (nat) span;
+        return (uint32_t) span;
     } else {
         // wrapped around
         return (q->size - span);
@@ -395,7 +403,7 @@ STATIC_INLINE nat queueSize(ClosureQ* q) {
 static void queueClosure(ClosureQ* q, StgClosure *closure) {
 
     // next index, wrapping around when required
-    nat idx = (q->head == q->size - 1) ? 0 : q->head + 1;
+    uint32_t idx = (q->head == q->size - 1) ? 0 : q->head + 1;
 
     if (idx == q->tail) {
         // queue full, stop (should not happen with sizes used here)
@@ -414,9 +422,9 @@ static StgClosure *deQueueClosure(ClosureQ* q) {
     if (!queueEmpty(q)) {
         StgClosure* c = q->queue[q->tail];
         q->tail = (q->tail == q->size-1) ? 0 : (q->tail + 1);
-        PACKETDEBUG(debugBelch(">__> DeQ: %p (%s); %ld elems in q\n",
+        PACKETDEBUG(debugBelch(">__> DeQ: %p (%s); %d elems in q\n",
                                c, info_type(UNTAG_CLOSURE(c)),
-                               (long) queueSize(q)));
+                               queueSize(q)));
         return c;
     } else {
         PACKETDEBUG(debugBelch("Q empty\n "));
@@ -451,7 +459,7 @@ STATIC_INLINE StgWord offsetFor(PackState* p, StgClosure *closure) {
 
 // roomToPack checks if the buffer has enough space to pack the given size (in
 // StgWords). For GUM, it would also include queue size * FETCHME-size.
-STATIC_INLINE rtsBool roomToPack(PackState* p, nat size)
+STATIC_INLINE bool roomToPack(PackState* p, uint32_t size)
 {
     if ((p->position +  // where we are in the buffer right now
          size +         // space needed for the current closure
@@ -461,9 +469,9 @@ STATIC_INLINE rtsBool roomToPack(PackState* p, nat size)
          1)             // closure tag
         >= p->size) {
         PACKDEBUG(debugBelch("Pack buffer full (size %d). ", p->position));
-        return rtsFalse;
+        return false;
     }
-    return rtsTrue;
+    return true;
 }
 
 // quick test for blackholes. Available somewhere else?
@@ -471,7 +479,7 @@ STATIC_INLINE rtsBool roomToPack(PackState* p, nat size)
 #ifdef LIBRARY_CODE
 STATIC_INLINE
 #endif
-rtsBool isBlackhole(StgClosure* node) {
+bool isBlackhole(StgClosure* node) {
     // since ghc-7.0, blackholes are used as indirections. inspect indirectee.
     if(((StgInfoTable*)get_itbl(UNTAG_CLOSURE(node)))->type == BLACKHOLE) {
         StgClosure* indirectee = ((StgInd*)node)->indirectee;
@@ -479,12 +487,12 @@ rtsBool isBlackhole(StgClosure* node) {
         switch (((StgInfoTable*)get_itbl(UNTAG_CLOSURE(indirectee)))->type) {
         case TSO:
         case BLOCKING_QUEUE:
-            return rtsTrue;
+            return true;
         default:
-            return rtsFalse;
+            return false;
         }
     }
-    return rtsFalse;
+    return false;
 }
 
 // unwind (chains of) indirections, return the actual data closure
@@ -516,10 +524,12 @@ STATIC_INLINE StgClosure* unwindInd(StgClosure *closure)
 */
 STATIC_INLINE StgInfoTable*
 getClosureInfo(StgClosure* node, StgInfoTable* info,
-                 nat *size, nat *ptrs, nat *nonptrs, nat *vhs) {
+               uint32_t *size, uint32_t *ptrs,
+               uint32_t *nonptrs, uint32_t *vhs) {
+
     // We remove the potential tag before doing anything.
     node = UNTAG_CLOSURE(node);
-
+    
     if (info == NULL) {
         // Supposed to compute info table by ourselves. This will go very wrong
         // if we use an info _offset_ instead (if we are supposed to look at a
@@ -527,7 +537,7 @@ getClosureInfo(StgClosure* node, StgInfoTable* info,
         // something tagged.
         ASSERT(!GET_CLOSURE_TAG((StgClosure*) node->header.info));
         // not tagged, OK
-        info = get_itbl(node);
+        info = (StgInfoTable*) get_itbl(node);
     }
     // ClosureMacros.h. NB relies on variable header for PAP, AP, Arrays
     *size = closure_sizeW_(node, info);
@@ -584,7 +594,7 @@ getClosureInfo(StgClosure* node, StgInfoTable* info,
         // NB nonptrs field for array closures is only used in checkPacket
         break;
 
-#if __GLASGOW_HASKELL__ > 708
+#if __GLASGOW_HASKELL__ >= 709
         // Small arrays do not have card tables, straightforward
     case SMALL_MUT_ARR_PTRS_CLEAN:
     case SMALL_MUT_ARR_PTRS_DIRTY:
@@ -609,11 +619,16 @@ getClosureInfo(StgClosure* node, StgInfoTable* info,
     case RET_BCO:
         barf("getClosureInfo: stack frame!");
         break;
+#if __GLASGOW_HASKELL__ >= 801
+    case COMPACT_NFDATA:
+        barf("compact nfdata not supported");
+        break;
+#endif
 
     default:
         // this works for all pointers-first layouts
-        *ptrs = (nat) (info->layout.payload.ptrs);
-        *nonptrs = (nat) (info->layout.payload.nptrs);
+        *ptrs = (uint32_t) (info->layout.payload.ptrs);
+        *nonptrs = (uint32_t) (info->layout.payload.nptrs);
         *vhs = *size - *ptrs - *nonptrs - sizeofW(StgHeader);
     }
 
@@ -628,9 +643,9 @@ getClosureInfo(StgClosure* node, StgInfoTable* info,
  * The graph is packed breadth-first into a given buffer of StgWords.
  *
  * In the buffer, 3 different types of entities are packed
- *  0L - closure with static address        - PackPLC
- *  1L - offset (closure already in packet) - PackOffset
- *  2L - a heap closure follows             - PackGeneric/specialised routines
+ *  1L - closure with static address        - PackPLC
+ *  2L - offset (closure already in packet) - PackOffset
+ *  3L - a heap closure follows             - PackGeneric/specialised routines
  *
  *  About "pointer tagging":
  *   Every closure pointer carries a tag in its l.s. bits (those which
@@ -707,7 +722,7 @@ STATIC_INLINE void Pack(PackState* p, StgWord data) {
 int pmtryPackToBuffer(StgClosure* closure, StgArrBytes* mutArr) {
     int errcode = P_SUCCESS; // error code returned by PackClosure
     PackState* p;
-    nat size;
+    uint32_t size;
 
     PACKDEBUG( {
             char fpstr[MAX_FINGER_PRINT_LEN];
@@ -756,10 +771,10 @@ int pmtryPackToBuffer(StgClosure* closure, StgArrBytes* mutArr) {
 // Returns packed size (in bytes!) + P_ERRCODEMAX when successful, or
 // error codes upon failure
 int packToBuffer(StgClosure* closure,
-                 StgWord *buffer, nat bufsize, StgTSO *caller) {
+                 StgWord *buffer, uint32_t bufsize, StgTSO *caller) {
     int errcode = P_SUCCESS; // error code returned by PackClosure
     PackState* p;
-    nat size;
+    uint32_t size;
 
     PACKDEBUG( {
             char fpstr[MAX_FINGER_PRINT_LEN];
@@ -890,7 +905,7 @@ loop:
     }
 
     // remove the tag (temporary, subroutines will handle tag as needed)
-    info = get_itbl(UNTAG_CLOSURE(closure));
+    info = (StgInfoTable*) get_itbl(UNTAG_CLOSURE(closure));
 
     // code relies on info-pointers being word-aligned (they are tagged)
     ASSERT(info == UNTAG_CAST(StgInfoTable*, info));
@@ -907,17 +922,43 @@ loop:
     case CONSTR_2_0:
     case CONSTR_1_1:
     case CONSTR_0_2:
+#if __GLASGOW_HASKELL__ >= 801
+        // Between GHC 8.01 and (forthcoming) 8.02 the _STATIC constr.
+        // variants were removed, and the new CONSTR_NOCAF type added.
+        // Static constructors now have to be discovered using the
+        // HEAP_ALLOCED macro on the address.
+    case CONSTR_NOCAF:
+
+        // While it should be OK to execute the code below in older
+        // GHCs, the new type is not, and we separate it to make 
+        // differences apparent.
+
+        if (!HEAP_ALLOCED(closure)) {
+            // (see code below for other *_STATIC closures)
+            PACKETDEBUG(debugBelch("*>~~ Found static constr %p (%s),"
+                                   " packing as a PLC\n",
+                                   closure, info_type_by_ip(info)));
+            PackPLC(p, (StgPtr)closure);
+            // PLCs are packed with their tag (closure is still tagged)
+            return P_SUCCESS;
+        }
+        // otherwise fall through to old code and pack heap-allocated
+#endif
         return PackGeneric(p, closure);
 
-    case CONSTR_STATIC:        // We pack indirections to CAFs:
-    case CONSTR_NOCAF_STATIC:  // Therefore, we need keepCAFs==rtsTrue
-    case FUN_STATIC:           // (otherwise GC leaves dangling pointers
-    case THUNK_STATIC:         // from original CAF site to the heap)
-        // all these are packed with their tag (closure is still tagged)
+#if __GLASGOW_HASKELL__ < 801
+    case CONSTR_STATIC:
+    case CONSTR_NOCAF_STATIC:
+#endif
+    case FUN_STATIC:
+    case THUNK_STATIC:
+        // We pack indirections to CAFs: Therefore, we need
+        // keepCAFs==true (otherwise GC leaves dangling pointers
+        // from original CAF site to the heap)
         PACKETDEBUG(debugBelch("*>~~ Packing a %p (%s) as a PLC\n",
                                closure, info_type_by_ip(info)));
-
         PackPLC(p, (StgPtr)closure);
+        // PLCs are packed with their tag (closure is still tagged)
         // NB: unpacked_size of a PLC is 0
         return P_SUCCESS;
 
@@ -973,7 +1014,7 @@ loop:
     case IND_STATIC:
         // clearly a bug!
         barf("Pack: found IND_... after shorting out indirections %d (%s)",
-             (nat)(info->type), info_type_by_ip(info));
+             (uint8_t)(info->type), info_type_by_ip(info));
 
         // return vectors
     case RET_BCO:
@@ -1119,7 +1160,7 @@ loop:
         goto loop;
         // valid only for the threaded RTS... cannot distinguish here
 
-#if __GLASGOW_HASKELL__ > 708
+#if __GLASGOW_HASKELL__ >= 709
     case SMALL_MUT_ARR_PTRS_CLEAN:
     case SMALL_MUT_ARR_PTRS_DIRTY:
     case SMALL_MUT_ARR_PTRS_FROZEN:
@@ -1130,6 +1171,16 @@ loop:
         //                 +------------------------------+
         // No problem with using PackGeneric and vhs=1 in getClosureInfo
         return PackGeneric(p, closure);
+#endif
+
+#if __GLASGOW_HASKELL__ >= 801
+    case COMPACT_NFDATA:
+        // a chain of blocks full of self-contained NFData. We could
+        // choose to serialise the entire chain of blocks, but would
+        // then have to fix all included intra-region pointers. There
+        // is support for doing this in CNF.[ch], but using CNF here
+        // would be like a bus pulling a passenger train.
+        goto unsupported;
 #endif
 
 unsupported:
@@ -1143,7 +1194,7 @@ impossible:
         return P_IMPOSSIBLE;
 
     default:
-        barf("Pack: strange closure %d", (nat)(info->type));
+        barf("Pack: strange closure %d", (uint8_t)(info->type));
     } // closure type switch
 
 }
@@ -1157,7 +1208,7 @@ impossible:
 //  the info pointer. It is tagged and offset to a known base.
 static StgWord PackGeneric(PackState* p, StgClosure* closure)
 {
-    nat size, ptrs, nonptrs, vhs, i;
+    uint32_t size, ptrs, nonptrs, vhs, i;
     StgWord tag=0;
     StgClosure* infoptr; // actually just a pointer...
 
@@ -1272,15 +1323,15 @@ static StgWord PackGeneric(PackState* p, StgClosure* closure)
 // this version packs the btimap instead.
 static StgWord PackPAP(PackState *p, StgPAP *pap) {
 
-    nat i;
-    nat hsize;          // header size
+    uint32_t i;
+    uint32_t hsize;     // header size
     StgWord bitmap;     // small bitmap
     StgLargeBitmap *lbm;// large bitmap
-    nat bsize;          // bitmap size
-    nat bsizeW;         // bitmap size in words
-    StgFunInfoTable *funInfo; // to get bitmap
+    uint32_t bsize;     // bitmap size
+    uint32_t bsizeW;    // bitmap size in words
+    const StgFunInfoTable *funInfo; // to get bitmap
 
-    nat n_args;         // arg. count on stack
+    uint32_t n_args;    // arg. count on stack
     StgClosure *fun;    // function in PAP/AP
     StgPtr ptr;         // stack object currently packed
     StgWord tag = 0;
@@ -1453,7 +1504,7 @@ static StgWord PackPAP(PackState *p, StgPAP *pap) {
         return P_UNSUPPORTED;
         // XXX following code UNCHECKED!
         // written to closely match Scav.c::scavenge_large_bitmap
-        nat j, b;
+        uint32_t j, b;
         b = 0;
         bsize = lbm->size;
         for(i = 0; i < bsize; b++) {
@@ -1502,7 +1553,7 @@ static StgWord PackPAP(PackState *p, StgPAP *pap) {
 static StgWord PackArray(PackState *p, StgClosure *closure) {
 
     StgClosure *infoptr;
-    nat i, payloadsize, packsize;
+    uint32_t i, payloadsize, packsize;
 
     /* remove tag, store it in infopointer (same as above) */
     StgWord tag=0;
@@ -1512,7 +1563,7 @@ static StgWord PackArray(PackState *p, StgClosure *closure) {
 
 #if DEBUG
     /* get info about basic layout of the closure */
-    StgInfoTable *info = get_itbl(closure);
+    const StgInfoTable *info = get_itbl(closure);
 
     ASSERT( info->type == MUT_ARR_PTRS_CLEAN
             || info->type == MUT_ARR_PTRS_DIRTY
@@ -1570,8 +1621,8 @@ static StgWord PackArray(PackState *p, StgClosure *closure) {
 
   Formerly, there was also a globalAddr** @gamap@ parameter: set to
   point to an array of (oldGA,newGA) pairs which were created as a result
-  of unpacking the buffer; and nat* @nGAs@ set to the number of GA pairs which
-  were created.
+  of unpacking the buffer; and uint32_t* @nGAs@ set to the number of GA
+  pairs which were created.
 
   for "pointer tagging", we assume here that all stored
   info pointers (each first word of a packed closure) also carry the
@@ -1589,7 +1640,7 @@ StgClosure* pmUnpackGraphWrapper(StgArrBytes* packBufferArray, Capability* cap)
 StgClosure* unpackGraphWrapper(StgArrBytes* packBufferArray, Capability* cap)
 #endif
 {
-    nat size;
+    uint32_t size;
     StgWord *buffer;
     StgClosure* newGraph;
 
@@ -1642,8 +1693,8 @@ unpackGraph(rtsPackBuffer *packBuffer, Capability* cap) {
 static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
     StgWord* bufptr;
     StgClosure *closure, *parent, *graphroot;
-    nat pptr = 0, pptrs = 0, pvhs = 0;
-    nat currentOffset;
+    uint32_t pptr = 0, pptrs = 0, pvhs = 0;
+    uint32_t currentOffset;
     HashTable* offsets;
     ClosureQ* queue;
 
@@ -1666,7 +1717,7 @@ static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
         if (*bufptr == OFFSET || *bufptr == PLC) {
             currentOffset = 0;
         } else {
-            currentOffset = ((nat) (bufptr - buffer)) + PADDING;
+            currentOffset = ((uint32_t) (bufptr - buffer)) + PADDING;
             // ...which is at least 1 (PADDING)
         }
 
@@ -1730,7 +1781,7 @@ static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
     IF_DEBUG(sanity, ASSERT(*(bufptr++) == END_OF_BUFFER_MARKER));
 
     // assert we unpacked exactly as many words as there are in the buffer
-    ASSERT(size == (nat) (bufptr-buffer));
+    ASSERT(size == (uint32_t) (bufptr-buffer));
 
     // ToDo: are we *certain* graphroot has been set??? WDP 95/07
     ASSERT(graphroot!=NULL);
@@ -1763,8 +1814,9 @@ static StgClosure* unpackGraph_(StgWord *buffer, StgInt size, Capability* cap) {
 //                                       |
 //         *pptrs = N                 *pptr=3
 STATIC_INLINE void locateNextParent(ClosureQ* q, StgClosure** parentP,
-                                    nat* pptrP, nat* pptrsP, nat* pvhsP) {
-    nat size, nonptrs;
+                                    uint32_t* pptrP, uint32_t* pptrsP,
+                                    uint32_t* pvhsP) {
+    uint32_t size, nonptrs;
 
     // pptr as an index into the current parent; find the next pointer
     // field in the parent by increasing pptr; if that takes us off
@@ -1818,7 +1870,7 @@ static  StgClosure*
 UnpackClosure (ClosureQ* q, HashTable* offsets,
                StgWord **bufptrP, Capability* cap) {
     StgClosure *closure;
-    nat size,ptrs,nonptrs,vhs,i;
+    uint32_t size,ptrs,nonptrs,vhs,i;
     StgInfoTable *ip;
     StgWord tag = 0;
 
@@ -1901,6 +1953,9 @@ UnpackClosure (ClosureQ* q, HashTable* offsets,
             case CONSTR_2_0:
             case CONSTR_1_1:
             case CONSTR_0_2:
+#if __GLASGOW_HASKELL__ >= 801
+            case CONSTR_NOCAF:
+#endif
             case FUN:
             case FUN_1_0:
             case FUN_0_1:
@@ -1914,7 +1969,7 @@ UnpackClosure (ClosureQ* q, HashTable* offsets,
             case THUNK_1_1:
             case THUNK_0_2:
             case THUNK_SELECTOR:
-#if __GLASGOW_HASKELL__ > 708
+#if __GLASGOW_HASKELL__ >= 709
             case SMALL_MUT_ARR_PTRS_CLEAN:
             case SMALL_MUT_ARR_PTRS_DIRTY:
             case SMALL_MUT_ARR_PTRS_FROZEN0:
@@ -1989,8 +2044,8 @@ STATIC_INLINE StgClosure *UnpackOffset(HashTable* offsets, StgWord **bufptrP) {
     ASSERT((long) **bufptrP == OFFSET);
 
     (*bufptrP)++; // skip marker
-    // unpack nat; find closure for this offset
-    offset = (nat) **bufptrP;
+    // unpack uint32_t; find closure for this offset
+    offset = (uint32_t) **bufptrP;
     (*bufptrP)++; // skip offset
 
     ASSERT(offset != 0);
@@ -2025,7 +2080,7 @@ STATIC_INLINE  StgClosure *UnpackPLC(StgWord **bufptrP) {
 static StgClosure * UnpackPAP(ClosureQ *queue, StgInfoTable *info,
                               StgWord **bufptrP, Capability* cap) {
 
-    nat n_args, size, hsize, i;
+    uint32_t n_args, size, hsize, i;
     StgWord bsizeW;
     StgPtr pap; // PAP/AP is constructed here, but untyped (would need
                 // to distinguish the AP case all the time)
@@ -2125,7 +2180,7 @@ static StgClosure * UnpackPAP(ClosureQ *queue, StgInfoTable *info,
         return (StgClosure*) NULL;
         // need to repeatedly read a new bitmap and proceed
         StgPtr bitmapPos;
-        nat j;
+        uint32_t j;
         StgWord bitmap;
 
         // ... walk through the bitmap until n_args have been unpacked
@@ -2167,10 +2222,10 @@ static StgClosure * UnpackPAP(ClosureQ *queue, StgInfoTable *info,
 // unpacking arrays. Returns NULL in case of errors.
 static StgClosure* UnpackArray(ClosureQ *queue, StgInfoTable* info,
                                StgWord **bufptrP, Capability* cap) {
-    nat size;
+    uint32_t size;
     StgMutArrPtrs *array;
 
-    nat type = INFO_PTR_TO_STRUCT(info)->type;
+    uint32_t type = INFO_PTR_TO_STRUCT(info)->type;
 
     // refuse to work if not an array
     if (type != MUT_ARR_PTRS_CLEAN && type != MUT_ARR_PTRS_DIRTY &&
@@ -2279,6 +2334,7 @@ StgClosure* createListNode(Capability *cap, StgClosure *head, StgClosure *tail) 
  * 7.08.x - start state
  * 7.09   - addition of small array closures (61-64)
  * 8.01   - removal of IND_PERM (was 30), subsequent numbers shifting up
+ * 8.01   - addition of COMPACT_NFDATA (65). Prior 801 cannot be supported.
  */
 #if __GLASGOW_HASKELL__ == 708
 # if !(N_CLOSURE_TYPES == 61 )
@@ -2289,14 +2345,19 @@ StgClosure* createListNode(Capability *cap, StgClosure *head, StgClosure *tail) 
 # error Wrong closure type count in fingerprint array. Check code.
 # endif
 #elif __GLASGOW_HASKELL__ >= 801
+     // no CONSTR_NOCAF_STATIC, CONSTR_STATIC, but CONSTR_NOCAF
 # if !(N_CLOSURE_TYPES == 64 )
 # error Wrong closure type count in fingerprint array. Check code.
 # endif
 #endif
 static char* fingerPrintChar =
-    "0ccccccCC"    // INVALID CONSTRs (0-8)
-    "fffffff"      // FUNs (9-15)
-    "ttttttt"      // THUNKs (16-22)
+#if __GLASGOW_HASKELL__ >= 801
+    "0ccccccC"     // INVALID CONSTRs (0-7) (incl. C._NOCAF)
+#else
+    "0ccccccCC"    // INVALID CONSTRs (0-8) (incl. 2 C.*_STATIC)
+#endif
+    "fffffff"      // FUNs (9-15/8-14)
+    "ttttttt"      // THUNKs (16-22/15-21)
     "TBAPP"        // SELECTOR BCO AP PAP AP_STACK
 #if __GLASGOW_HASKELL__ >= 801
     "__"           // INDs (2)
@@ -2309,6 +2370,9 @@ static char* fingerPrintChar =
     "&FFFW"        // TREC (STM-)FRAMEs(3) WHITEHOLE
 #if __GLASGOW_HASKELL__ >= 708
     "ZZZZ"         // SmallArr(4)
+#endif
+#if __GLASGOW_HASKELL__ >= 801
+    "Ø"            // Compact NF block
 #endif
   ;
 
@@ -2341,7 +2405,7 @@ static void graphFingerPrint(char* fingerPrintStr, StgClosure *p)
   All recursive calls should be made to this function.
 */
 static void graphFingerPrint_(char* fp, HashTable* visited, StgClosure *p) {
-    nat i, len, args, arity;
+    uint32_t i, len, args, arity;
     const StgInfoTable *info;
     StgWord *payload;
 
@@ -2354,7 +2418,7 @@ static void graphFingerPrint_(char* fp, HashTable* visited, StgClosure *p) {
         return;
     /* at most 7 chars added immediately (unchecked) for this node */
     if (len+7 >= MAX_FINGER_PRINT_LEN) {
-        strcat(fp, "--end");
+        strcat(fp, "--");
         return;
     }
     /* check whether we have met this node already to break cycles */
@@ -2364,9 +2428,15 @@ static void graphFingerPrint_(char* fp, HashTable* visited, StgClosure *p) {
     }
 
     /* record that we are processing this closure */
-    insertHashTable(visited, (StgWord) p, (void *)rtsTrue/*non-NULL*/);
+    insertHashTable(visited, (StgWord) p, (void *) 1 /*non-NULL*/);
 
     ASSERT(LOOKS_LIKE_CLOSURE_PTR(p));
+
+#if __GLASGOW_HASKELL__ >= 801
+    // GHC 8.1 and younger do not use CONSTR_*_STATIC any more,
+    // therefore we need this different case exit.
+    if ( ! HEAP_ALLOCED(p)) return;
+#endif
 
     info = get_itbl((StgClosure *)p);
 
@@ -2377,13 +2447,17 @@ static void graphFingerPrint_(char* fp, HashTable* visited, StgClosure *p) {
     switch (info -> type) {
 
         // simple and static objects
+#if __GLASGOW_HASKELL__ < 801
         case CONSTR_STATIC:
         case CONSTR_NOCAF_STATIC:
+#endif
         case FUN_STATIC:
         case THUNK_STATIC:
+            // NB should never be reached in GHC > 801
             break;
 
         /* CONSTRs, THUNKs, FUNs are written with arity */
+            // NB no static constructors should be around in GHC > 801
         case THUNK_2_0:
             // append char for this node
             strcat(fp, "20(");
@@ -2466,6 +2540,9 @@ static void graphFingerPrint_(char* fp, HashTable* visited, StgClosure *p) {
 
         case FUN:
         case CONSTR:
+#if __GLASGOW_HASKELL__ >= 801
+        case CONSTR_NOCAF:
+#endif
             {
                 char str[6];
                 sprintf(str,"%d?(",info->layout.payload.ptrs);
@@ -2509,7 +2586,8 @@ print:
                 graphFingerPrint_(fp, visited, (StgClosure *) (p));
                 if (strlen(fp)+2 < MAX_FINGER_PRINT_LEN) {
                     StgWord bitmap;
-                    StgFunInfoTable *funInfo = get_fun_itbl(UNTAG_CLOSURE(p));
+                    const StgFunInfoTable *funInfo 
+                        = get_fun_itbl(UNTAG_CLOSURE(p));
                     strcat(fp, "|");
                     switch (funInfo->f.fun_type) {
                         /* these two use a large bitmap. We do not follow...*/
@@ -2613,7 +2691,7 @@ print:
                 char str[6];
                 sprintf(str, "%ld", (long)((StgMutArrPtrs*)p)->ptrs);
                 strcat(fp, str);
-                nat i;
+                uint32_t i;
                 for (i = 0; i < ((StgMutArrPtrs*)p)->ptrs; i++) {
                     //contains closures... follow
                     graphFingerPrint_(fp, visited,
@@ -2643,7 +2721,7 @@ print:
         case WHITEHOLE:
             break;
 
-#if __GLASGOW_HASKELL__ > 708
+#if __GLASGOW_HASKELL__ >= 709
         case SMALL_MUT_ARR_PTRS_CLEAN:
         case SMALL_MUT_ARR_PTRS_DIRTY:
         case SMALL_MUT_ARR_PTRS_FROZEN0:
@@ -2652,7 +2730,7 @@ print:
                 char str[6];
                 sprintf(str,"%ld",(long)((StgSmallMutArrPtrs*)p)->ptrs);
                 strcat(fp,str);
-                nat i;
+                uint32_t i;
                 for (i = 0; i < ((StgSmallMutArrPtrs*)p)->ptrs; i++) {
                     //contains closures... follow
                     graphFingerPrint_(fp, visited,
@@ -2661,7 +2739,11 @@ print:
                 break;
             }
 #endif
-
+#if __GLASGOW_HASKELL__ >= 801
+        case COMPACT_NFDATA:
+            // an opaque block of NF data, nothing to follow
+            break;
+#endif
         default:
             barf("graphFingerPrint_: unknown closure %d",
                  info -> type);
@@ -2672,9 +2754,9 @@ print:
 //  Sanity check on a packet.
 //    This does a full iteration over the packet, as in UnpackGraph.
 //  Arguments: buffer data ptr, buffer size in words
-static void checkPacket(StgWord* buffer, nat size) {
+static void checkPacket(StgWord* buffer, uint32_t size) {
     StgInt packsize, openptrs;
-    nat clsize, ptrs, nonptrs, vhs;
+    uint32_t clsize, ptrs, nonptrs, vhs;
     StgWord *bufptr;
     HashTable *offsets;
 
@@ -2733,7 +2815,7 @@ static void checkPacket(StgWord* buffer, nat size) {
             //              HEADERSIZE, vhs, ptrs, nonptrs, clsize));
 
             // This is rather a test for getClosureInfo...but used here
-            if (clsize != (nat) HEADERSIZE + vhs + ptrs + nonptrs) {
+            if (clsize != HEADERSIZE + vhs + ptrs + nonptrs) {
                 barf("size mismatch in packed closure at %p :"
                      "(%d + %d + %d +%d != %d)", bufptr,
                      HEADERSIZE, vhs, ptrs, nonptrs, clsize);
