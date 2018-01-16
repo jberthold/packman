@@ -1,5 +1,5 @@
 name:                packman
-version:             0.3.0
+version:             0.4.0
 synopsis:            Serialization library for GHC
 
 description:
@@ -68,7 +68,7 @@ library
                      GHC.Packing.PackException
                      GHC.Packing.Type
                      GHC.Packing.Core
-  build-depends:     base >= 4.7 && < 5,
+  build-depends:     base >= 4.7 && < 4.10,
                      ghc-prim >= 0.3,
                      array >= 0.5,
                      binary >= 0.7,
