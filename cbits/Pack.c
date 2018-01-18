@@ -2028,7 +2028,7 @@ UnpackClosure (ClosureQ* q, HashTable* offsets,
     default:
         // invalid markers (not OFFSET, PLC, CLOSURE) are caught here
         errorBelch("unpackClosure: Found invalid marker %" FMT_Word ".\n",
-                   (long) **bufptrP);
+                   **bufptrP);
         return (StgClosure *) NULL;
     }
 
