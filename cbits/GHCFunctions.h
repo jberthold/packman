@@ -31,3 +31,10 @@ extern void  stgFree(void* p);
 #ifdef DEBUG
 extern void checkClosure(StgClosure*);
 #endif
+
+#if __GLASGOW_HASKELL__ >= 801
+// we have to bring the internal HEAP_ALLOCED macro in scope
+// to be able to deal with CONSTR_NOCAF (to detect static ones)
+// This header file is taken from GHC 8.2 source code directly
+# include "GhcHeapAlloc.h"
+#endif
