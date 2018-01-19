@@ -1,5 +1,5 @@
 name:                packman
-version:             0.4.0
+version:             0.5.0
 synopsis:            Serialization library for GHC
 
 description:
@@ -49,13 +49,15 @@ author:              Michael Budde, Ásbjørn V. Jøkladal, Jost Berthold
 maintainer:          jost.berthold@gmail.com
 build-type:          Simple
 cabal-version:       >= 1.18
-tested-with:         GHC==7.8.2, GHC==7.8.3, GHC==7.10.2
+tested-with:         GHC==7.8.2, GHC==7.8.3, GHC==7.10.2, GHC==8.0.2, GHC==8.2.1, GHC==8.2.2
 extra-source-files:  cbits/Wrapper.cmm
                      cbits/Pack.c
                      cbits/Errors.h
                      cbits/Types.h
                      cbits/GHCFunctions.h
-                     pack.old
+                     cbits/GhcHeapAlloc.h
+                     cbits/BeginPrivate.h
+                     cbits/EndPrivate.h
 
 flag debug
   manual:            True
@@ -68,7 +70,7 @@ library
                      GHC.Packing.PackException
                      GHC.Packing.Type
                      GHC.Packing.Core
-  build-depends:     base >= 4.7 && < 4.10,
+  build-depends:     base >= 4.7 && < 5,
                      ghc-prim >= 0.3,
                      array >= 0.5,
                      binary >= 0.7,
@@ -177,4 +179,4 @@ test-suite quickchecktest
 
 source-repository head
   type:     git
-  location: git://github.com/jberthold/packman.git
+  location: https://github.com/jberthold/packman.git

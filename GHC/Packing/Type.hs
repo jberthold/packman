@@ -49,7 +49,7 @@ import Foreign.Storable ( sizeOf )
 -- for dynamic type checks when parsing
 import Data.Typeable (Typeable(..), typeOf)
 #if MIN_VERSION_base(4,8,0)
-import Data.Typeable.Internal (TypeRep(..), typeRepFingerprint)
+import Data.Typeable (typeRepFingerprint)
 #else
 import Data.Typeable.Internal (TypeRep(..))
 #endif

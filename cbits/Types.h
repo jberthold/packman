@@ -10,7 +10,7 @@ typedef struct pmPackBuffer_ {
     // for data messages only,
     StgInt /* nat */     size;
     StgInt /* nat */     unpacked_size;
-    StgWord              buffer[FLEXIBLE_ARRAY];
+    StgWord              buffer[];
 } pmPackBuffer;
 
 
