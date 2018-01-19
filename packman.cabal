@@ -179,4 +179,4 @@ test-suite quickchecktest
 
 source-repository head
   type:     git
-  location: git://github.com/jberthold/packman.git
+  location: https://github.com/jberthold/packman.git
