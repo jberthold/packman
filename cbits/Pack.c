@@ -56,6 +56,13 @@
 #define true  rtsTrue
 #define false rtsFalse
 #endif
+// the story goes on
+#if __GLASGOW_HASKELL__ >= 806
+#define SMALL_MUT_ARR_PTRS_FROZEN0  SMALL_MUT_ARR_PTRS_FROZEN_DIRTY
+#define SMALL_MUT_ARR_PTRS_FROZEN   SMALL_MUT_ARR_PTRS_FROZEN_CLEAN
+#define MUT_ARR_PTRS_FROZEN0        MUT_ARR_PTRS_FROZEN_DIRTY
+#define MUT_ARR_PTRS_FROZEN         MUT_ARR_PTRS_FROZEN_CLEAN
+#endif
 
 
 #ifdef DEBUG
@@ -529,7 +536,7 @@ getClosureInfo(StgClosure* node, StgInfoTable* info,
 
     // We remove the potential tag before doing anything.
     node = UNTAG_CLOSURE(node);
-    
+
     if (info == NULL) {
         // Supposed to compute info table by ourselves. This will go very wrong
         // if we use an info _offset_ instead (if we are supposed to look at a
@@ -930,7 +937,7 @@ loop:
     case CONSTR_NOCAF:
 
         // While it should be OK to execute the code below in older
-        // GHCs, the new type is not, and we separate it to make 
+        // GHCs, the new type is not, and we separate it to make
         // differences apparent.
 
         if (!HEAP_ALLOCED(closure)) {
@@ -1082,7 +1089,7 @@ loop:
                 // In GUM, we would globalise and pack a FetchMe.
 #endif
                 // Without global addresses and virtual shared heap, packing
-                // just fails, an error code is returned to Haskell. 
+                // just fails, an error code is returned to Haskell.
                 // Likewise in library code: would be good to just block on the
                 // blackhole, but there is no way to return to the scheduler.
                 PACKETDEBUG(debugBelch("packing hit a %s at %p (returning).\n",
@@ -2285,7 +2292,7 @@ StgClosure* createBH(Capability *cap) {
 
   SET_HDR(new, &stg_BLACKHOLE_info, CCS_SYSTEM); // ccs to be checked!
 
-  new->payload[0] = (StgClosure*) &stg_system_tso; 
+  new->payload[0] = (StgClosure*) &stg_system_tso;
           // see above. Pseudo-TSO (has TSO info pointer) owning all
           // system-created black holes, and storing BQs.
 
@@ -2326,7 +2333,7 @@ StgClosure* createListNode(Capability *cap, StgClosure *head, StgClosure *tail) 
 /* this array has to be kept in sync with includes/ClosureTypes.h.
  * For backwards compatibility of packman, changes need to be worked in
  * via CPP (or multipurpose code where possible).
- * 
+ *
  * Changes are identified by minor version, we cannot be more precise than
  * that, but non-released version numbers (odd minor version) are included.
  *
@@ -2586,7 +2593,7 @@ print:
                 graphFingerPrint_(fp, visited, (StgClosure *) (p));
                 if (strlen(fp)+2 < MAX_FINGER_PRINT_LEN) {
                     StgWord bitmap;
-                    const StgFunInfoTable *funInfo 
+                    const StgFunInfoTable *funInfo
                         = get_fun_itbl(UNTAG_CLOSURE(p));
                     strcat(fp, "|");
                     switch (funInfo->f.fun_type) {
