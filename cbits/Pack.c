@@ -19,7 +19,7 @@
 
 */
 
-#ifdef LIBRARY_CODE
+#if defined(LIBRARY_CODE)
 
 #include <Rts.h>
 #include <string.h>
@@ -56,9 +56,16 @@
 #define true  rtsTrue
 #define false rtsFalse
 #endif
+// and sometimes things just need to have the right name (on it?..)
+#if __GLASGOW_HASKELL__ < 805
+#define SMALL_MUT_ARR_PTRS_FROZEN_DIRTY SMALL_MUT_ARR_PTRS_FROZEN0
+#define SMALL_MUT_ARR_PTRS_FROZEN_CLEAN SMALL_MUT_ARR_PTRS_FROZEN
+#define MUT_ARR_PTRS_FROZEN_DIRTY MUT_ARR_PTRS_FROZEN0
+#define MUT_ARR_PTRS_FROZEN_CLEAN MUT_ARR_PTRS_FROZEN
+#endif
 
 
-#ifdef DEBUG
+#if defined(DEBUG)
 #define DBG_HEADROOM 1
 #define END_OF_BUFFER_MARKER 0xdededeee
 #else
@@ -66,14 +73,14 @@
 #endif
 
 // debugging macros for library and in-RTS version
-#ifdef LIBRARY_CODE
+#if defined(LIBRARY_CODE)
 // for the library version, borrow flags "scheduler" and "sparks"
 # define PACKDEBUG(s) IF_DEBUG(scheduler, s)
 # define PACKETDEBUG(s) IF_DEBUG(sparks, s)
 #else
 // for the in-RTS version, use the usual macros
 // XXX maybe drop support for the non-parallel in-RTS version
-# ifdef PARALLEL_RTS
+#if defined(PARALLEL_RTS)
 #  define PACKDEBUG(s) IF_PAR_DEBUG(pack, s)
 #  define PACKETDEBUG(s) IF_PAR_DEBUG(packet, s)
 # else
@@ -148,7 +155,7 @@ typedef struct PackState_ {
 static void init(void) __attribute__((constructor));
 
 // init/destruct pack data structure
-#ifdef LIBRARY_CODE
+#if defined(LIBRARY_CODE)
 static PackState* initPacking(StgArrBytes *mutArr);
 #else
 static PackState* initRtsPacking(StgWord *buffer, uint32_t size, StgTSO *tso);
@@ -176,7 +183,7 @@ STATIC_INLINE bool roomToPack(PackState* p, uint32_t size);
 STATIC_INLINE StgInfoTable* getClosureInfo(StgClosure* node, StgInfoTable* info,
                                            uint32_t *size, uint32_t *ptrs,
                                            uint32_t *nonptrs, uint32_t *vhs);
-#ifdef LIBRARY_CODE
+#if defined(LIBRARY_CODE)
 // remains local when code is stand-alone for the library
 STATIC_INLINE bool pmIsBlackhole(StgClosure* node);
 #define isBlackhole pmIsBlackhole
@@ -188,7 +195,7 @@ STATIC_INLINE bool pmIsBlackhole(StgClosure* node);
 /************************
  *  interface for packing
  */
-#ifdef LIBRARY_CODE
+#if defined(LIBRARY_CODE)
 // interface function used in foreign primop: pack graph to given array, return
 // size in bytes (offset by P_ERRCODEMAX) or an error code
 int pmtryPackToBuffer(StgClosure* closure, StgArrBytes* mutArr);
@@ -223,7 +230,7 @@ static StgWord PackArray(PackState* p, StgClosure* array);
 /**************************
  *  interface for unpacking
  */
-#ifdef LIBRARY_CODE
+#if defined(LIBRARY_CODE)
 // interface unpacking from a Haskell array (using the Haskell Byte Array)
 // may return error code P_GARBLED
 StgClosure* pmUnpackGraphWrapper(StgArrBytes* packBufferArray, Capability* cap);
@@ -308,7 +315,7 @@ static void init(void) {
  */
 
 // Pack state constructor, allocates space, queue and hash table.
-#ifdef LIBRARY_CODE
+#if defined(LIBRARY_CODE)
 // A mutable array is passed as the buffer space. Note that its size comes in
 // bytes, while internally all is managed in units of StgWord.
 static PackState* initPacking(StgArrBytes *mutArr) {
@@ -463,7 +470,7 @@ STATIC_INLINE bool roomToPack(PackState* p, uint32_t size)
 {
     if ((p->position +  // where we are in the buffer right now
          size +         // space needed for the current closure
-#ifdef GUM
+#if defined(GUM)
          queueSize(q) * FETCH_ME_PACKED_SIZE +
 #endif
          1)             // closure tag
@@ -476,7 +483,7 @@ STATIC_INLINE bool roomToPack(PackState* p, uint32_t size)
 
 // quick test for blackholes. Available somewhere else?
 
-#ifdef LIBRARY_CODE
+#if defined(LIBRARY_CODE)
 STATIC_INLINE
 #endif
 bool isBlackhole(StgClosure* node) {
@@ -586,8 +593,8 @@ getClosureInfo(StgClosure* node, StgInfoTable* info,
         */
     case MUT_ARR_PTRS_CLEAN:
     case MUT_ARR_PTRS_DIRTY:
-    case MUT_ARR_PTRS_FROZEN0:
-    case MUT_ARR_PTRS_FROZEN:
+    case MUT_ARR_PTRS_FROZEN_CLEAN:
+    case MUT_ARR_PTRS_FROZEN_DIRTY:
         *vhs = 2;
         *ptrs = ((StgMutArrPtrs*) node)->ptrs;
         *nonptrs = ((StgMutArrPtrs*) node)->size - *ptrs; // count card table
@@ -598,8 +605,8 @@ getClosureInfo(StgClosure* node, StgInfoTable* info,
         // Small arrays do not have card tables, straightforward
     case SMALL_MUT_ARR_PTRS_CLEAN:
     case SMALL_MUT_ARR_PTRS_DIRTY:
-    case SMALL_MUT_ARR_PTRS_FROZEN0:
-    case SMALL_MUT_ARR_PTRS_FROZEN:
+    case SMALL_MUT_ARR_PTRS_FROZEN_CLEAN:
+    case SMALL_MUT_ARR_PTRS_FROZEN_DIRTY:
         *vhs = 1; // ptrs field
         *ptrs = ((StgSmallMutArrPtrs*) node)->ptrs;
         *nonptrs = 0;
@@ -715,7 +722,7 @@ STATIC_INLINE void Pack(PackState* p, StgWord data) {
     p->buffer[p->position++] = data;
 }
 
-#ifdef LIBRARY_CODE
+#if defined(LIBRARY_CODE)
 // pmtryPackToBuffer: interface function called by the foreign primop.
 // Returns packed size (in bytes!) + P_ERRCODEMAX when successful, or
 // error codes upon failure
@@ -1115,8 +1122,8 @@ loop:
 
     case MUT_ARR_PTRS_CLEAN:
     case MUT_ARR_PTRS_DIRTY:
-    case MUT_ARR_PTRS_FROZEN0:
-    case MUT_ARR_PTRS_FROZEN:
+    case MUT_ARR_PTRS_FROZEN_CLEAN:
+    case MUT_ARR_PTRS_FROZEN_DIRTY:
         // Arrays of pointers have a card table to indicate dirty cells,
         // therefore not the simple pointers/nonpointers layout.
         // NB At this level, we cannot distinguish immutable arrays
@@ -1163,8 +1170,8 @@ loop:
 #if __GLASGOW_HASKELL__ >= 709
     case SMALL_MUT_ARR_PTRS_CLEAN:
     case SMALL_MUT_ARR_PTRS_DIRTY:
-    case SMALL_MUT_ARR_PTRS_FROZEN:
-    case SMALL_MUT_ARR_PTRS_FROZEN0:
+    case SMALL_MUT_ARR_PTRS_FROZEN_CLEAN:
+    case SMALL_MUT_ARR_PTRS_FROZEN_DIRTY:
         // unlike the standard arrays, small arrays do not have a card table
         // Layout is thus: +------------------------------+
         //                 | hdr | #ptrs | payload (ptrs) |
@@ -1234,7 +1241,7 @@ static StgWord PackGeneric(PackState* p, StgClosure* closure)
     registerOffset(p, closure);
 
     // GUM would allocate a GA for the packed closure if it is a thunk
-#ifdef GUM
+#if defined(GUM)
     // Checks for globalisation scheme; default: globalise everything thunks
     if ( RtsFlags.ParFlags.globalising == 0 ||
          (closure_THUNK(closure) && !closure_UNPOINTED(closure)) )
@@ -1269,7 +1276,7 @@ static StgWord PackGeneric(PackState* p, StgClosure* closure)
 
     // unpacked_size += size; XXX unpacked_size in PackState
 
-#ifdef GUM
+#if defined(GUM)
     // Record that this is a revertable black hole so that we can fill
     // in its address from the fetch reply.  Problem: unshared thunks
     // may cause space leaks this way, their GAs should be deallocated
@@ -1561,14 +1568,14 @@ static StgWord PackArray(PackState *p, StgClosure *closure) {
     tag = GET_CLOSURE_TAG(closure);
     closure = UNTAG_CLOSURE(closure);
 
-#if DEBUG
+#if defined(DEBUG)
     /* get info about basic layout of the closure */
     const StgInfoTable *info = get_itbl(closure);
 
     ASSERT( info->type == MUT_ARR_PTRS_CLEAN
             || info->type == MUT_ARR_PTRS_DIRTY
-            || info->type == MUT_ARR_PTRS_FROZEN0
-            || info->type == MUT_ARR_PTRS_FROZEN);
+            || info->type == MUT_ARR_PTRS_FROZEN_CLEAN
+            || info->type == MUT_ARR_PTRS_FROZEN_DIRTY);
 #endif
 
     // MUT_ARR_PTRS_* {HDR,(no. of)ptrs,size(total incl.card table)}
@@ -1632,7 +1639,7 @@ static StgWord PackArray(PackState *p, StgClosure *closure) {
   Done by UnpackClosure(), see there.
 */
 
-#ifdef LIBRARY_CODE
+#if defined(LIBRARY_CODE)
 // unpacking from a Haskell array (using the Haskell Byte Array)
 // may return error code P_GARBLED
 StgClosure* pmUnpackGraphWrapper(StgArrBytes* packBufferArray, Capability* cap)
@@ -1937,8 +1944,8 @@ UnpackClosure (ClosureQ* q, HashTable* offsets,
                 // space after data space, and enqueue the closure
             case MUT_ARR_PTRS_CLEAN:
             case MUT_ARR_PTRS_DIRTY:
-            case MUT_ARR_PTRS_FROZEN0:
-            case MUT_ARR_PTRS_FROZEN:
+            case MUT_ARR_PTRS_FROZEN_CLEAN:
+            case MUT_ARR_PTRS_FROZEN_DIRTY:
                 closure = UnpackArray(q, ip, bufptrP, cap);
                 break;
 
@@ -1972,8 +1979,8 @@ UnpackClosure (ClosureQ* q, HashTable* offsets,
 #if __GLASGOW_HASKELL__ >= 709
             case SMALL_MUT_ARR_PTRS_CLEAN:
             case SMALL_MUT_ARR_PTRS_DIRTY:
-            case SMALL_MUT_ARR_PTRS_FROZEN0:
-            case SMALL_MUT_ARR_PTRS_FROZEN:
+            case SMALL_MUT_ARR_PTRS_FROZEN_CLEAN:
+            case SMALL_MUT_ARR_PTRS_FROZEN_DIRTY:
 #endif
 
                 PACKETDEBUG(
@@ -2028,7 +2035,7 @@ UnpackClosure (ClosureQ* q, HashTable* offsets,
     default:
         // invalid markers (not OFFSET, PLC, CLOSURE) are caught here
         errorBelch("unpackClosure: Found invalid marker %" FMT_Word ".\n",
-                   **bufptrP);
+                   (long) **bufptrP);
         return (StgClosure *) NULL;
     }
 
@@ -2228,8 +2235,10 @@ static StgClosure* UnpackArray(ClosureQ *queue, StgInfoTable* info,
     uint32_t type = INFO_PTR_TO_STRUCT(info)->type;
 
     // refuse to work if not an array
-    if (type != MUT_ARR_PTRS_CLEAN && type != MUT_ARR_PTRS_DIRTY &&
-        type != MUT_ARR_PTRS_FROZEN0 && type != MUT_ARR_PTRS_FROZEN) {
+    if (type != MUT_ARR_PTRS_CLEAN &&
+        type != MUT_ARR_PTRS_DIRTY &&
+        type != MUT_ARR_PTRS_FROZEN_CLEAN &&
+        type != MUT_ARR_PTRS_FROZEN_DIRTY) {
 
         PACKDEBUG(errorBelch("UnpackArray: unexpected closure type %d",
                              INFO_PTR_TO_STRUCT(info)->type));
@@ -2685,8 +2694,8 @@ print:
 
         case MUT_ARR_PTRS_CLEAN:
         case MUT_ARR_PTRS_DIRTY:
-        case MUT_ARR_PTRS_FROZEN0:
-        case MUT_ARR_PTRS_FROZEN:
+        case MUT_ARR_PTRS_FROZEN_CLEAN:
+        case MUT_ARR_PTRS_FROZEN_DIRTY:
             {
                 char str[6];
                 sprintf(str, "%ld", (long)((StgMutArrPtrs*)p)->ptrs);
@@ -2724,8 +2733,8 @@ print:
 #if __GLASGOW_HASKELL__ >= 709
         case SMALL_MUT_ARR_PTRS_CLEAN:
         case SMALL_MUT_ARR_PTRS_DIRTY:
-        case SMALL_MUT_ARR_PTRS_FROZEN0:
-        case SMALL_MUT_ARR_PTRS_FROZEN:
+        case SMALL_MUT_ARR_PTRS_FROZEN_CLEAN:
+        case SMALL_MUT_ARR_PTRS_FROZEN_DIRTY:
             {
                 char str[6];
                 sprintf(str,"%ld",(long)((StgSmallMutArrPtrs*)p)->ptrs);
@@ -2817,7 +2826,7 @@ static void checkPacket(StgWord* buffer, uint32_t size) {
             // This is rather a test for getClosureInfo...but used here
             if (clsize != HEADERSIZE + vhs + ptrs + nonptrs) {
                 barf("size mismatch in packed closure at %p :"
-                     "(%d + %d + %d +%d != %d)", bufptr,
+                     "(%" FMT_Word " + %d + %d +%d != %d)", bufptr,
                      HEADERSIZE, vhs, ptrs, nonptrs, clsize);
             }
 
@@ -2851,8 +2860,8 @@ static void checkPacket(StgWord* buffer, uint32_t size) {
                     break;
                 case MUT_ARR_PTRS_CLEAN:
                 case MUT_ARR_PTRS_DIRTY:
-                case MUT_ARR_PTRS_FROZEN0:
-                case MUT_ARR_PTRS_FROZEN:
+                case MUT_ARR_PTRS_FROZEN_CLEAN:
+                case MUT_ARR_PTRS_FROZEN_DIRTY:
                     // card table is counted as non-pointer, but not in packet
                     bufptr += sizeofW(StgHeader) + vhs;
                     packsize += 1 + sizeofW(StgHeader) + vhs;
@@ -2864,7 +2873,7 @@ static void checkPacket(StgWord* buffer, uint32_t size) {
 
             openptrs += (StgInt) ptrs; // closure needs some pointers to be filled in
         } else {
-            barf("found invalid tag %x in packet", *bufptr);
+            barf("found invalid tag %" FMT_Word " in packet", *bufptr);
         }
 
         openptrs--; // one thing was unpacked
@@ -2874,7 +2883,7 @@ static void checkPacket(StgWord* buffer, uint32_t size) {
     PACKDEBUG(debugBelch(" traversed %" FMT_Word " words.", packsize));
 
     if (openptrs != 0) {
-        barf("%d open pointers at end of packet ",
+        barf("%" FMT_Word " open pointers at end of packet ",
                 openptrs);
     }
 

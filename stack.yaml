@@ -4,8 +4,10 @@ flags:
 packages:
 - '.'
 extra-deps: []
+#resolver: lts-7.24
 #resolver: lts-9.21
-resolver: lts-10.3
+#resolver: lts-10.3
+resolver: lts-12.7
 
 #docker:
 #  enable: true
