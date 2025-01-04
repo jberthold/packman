@@ -1,0 +1,85 @@
+name: Build & test in nix-shell
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build_test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-20.04, macos-13, macos-14]
+        ghc: [ghc7103, ghc802, ghc822, ghc844, ghc865Binary, ghc884, ghc810, ghc90, ghc92, ghc94, ghc96]
+        cc: [gcc8, gcc12, gcc14, clang_12, clang_16, clang_18]
+        exclude:
+          # GHC version >= 7.10 and <= 8.4 are provided by a version of nixpkgs that is broken for macOS (cf. https://github.com/NixOS/nixpkgs/issues/104580) so we exlude these
+          - os: macos-13
+            ghc: ghc7103
+          - os: macos-13
+            ghc: ghc802
+          - os: macos-13
+            ghc: ghc822
+          - os: macos-13
+            ghc: ghc844
+          - os: macos-14
+            ghc: ghc7103
+          - os: macos-14
+            ghc: ghc802
+          - os: macos-14
+            ghc: ghc822
+          - os: macos-14
+            ghc: ghc844
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v25
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.20.5/install
+          # NOTE: We avoid using arm64 builds of GHC (because they're mostly broken for early GHC versions) by specifying 'system = x86_64-darwin' for macOS runners
+          extra_nix_config: |
+            substituters = https://cache.nixos.org https://cache.iog.io
+            trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ=
+            system-features = benchmark big-parallel kvm nixos-test
+            ${{ startsWith(matrix.os, 'macos') && 'system = x86_64-darwin' || '' }}
+
+      - name: Cache cabal files
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cabal/packages
+            ~/.cabal/store
+            dist-newstyle
+          key: ${{ runner.os }}-${{ matrix.os }}-${{ hashFiles('**/*.cabal', '**/cabal.project', '**/cabal.project.freeze') }}--${{ matrix.ghc }}
+          restore-keys: ${{ runner.os }}-${{ matrix.os }}-
+
+      # Make nix-shell use specific Bash version.
+      # Cf. https://nixos.org/manual/nix/stable/command-ref/nix-shell#environment-variables.
+      - name: Set shell Bash
+        run: echo "NIX_BUILD_SHELL=$(nix-build -A bash .github/workflows/bash.nix)/bin/bash" >> $GITHUB_ENV
+
+      - name: Test nix-shell # test that the Nix shell actually works
+        run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'echo $PATH; ls -l $(which ghc); ls -l $(which cabal); ghc --version; cabal --version; type cabal'
+
+      - name: Export GHC version env var
+        run: echo "GHC_VERSION=$(nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'ghc --numeric-version')" >> $GITHUB_ENV
+
+      - name: Run 'cabal update'
+        run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'cabal update'
+
+      - name: Build library
+        run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'cabal build lib:packman'
+
+      - name: Build tests
+        run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'cabal build --enable-tests'
+
+      - name: Run tests
+        run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'cabal test --test-show-details direct' # "--test-show-details direct" makes cabal print test suite output to terminal
+
+      # Run all tests again showing only the output of failed tests
+      - name: Run failed tests
+        if: failure()
+        run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'cabal test --test-show-details failures'
