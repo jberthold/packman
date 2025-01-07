@@ -1,17 +1,19 @@
 {-
   Some tests to verify that serialisation works as expected
 -}
-module AllTests(tests)
+module Main(main)
     where
 
 import GHC.Packing
 
 import qualified Data.Array.IArray as A
 import Control.Concurrent
+import Control.Monad (forM_, forM, unless)
 
 import System.Environment
 import System.IO
 import System.Directory
+import qualified System.Exit
 import qualified Data.ByteString as B
 import Control.Exception
 import Data.Typeable
@@ -51,6 +53,20 @@ tests = do putStrLn "Running all tests"
 
 -- all configured tests, see below
 mytests = [eval_array, pack_array, pack_ThreadId, pack_MVar ]
+
+main :: IO ()
+main = do
+    putStrLn "Running all tests"
+    results <- forM mytests runTest
+    unless (and results) $ do
+        putStrLn "Some tests failed (see output above)"
+        System.Exit.exitFailure
+    where
+        runTest (name, action) = do
+            putStrLn $ "Running test '" ++ name ++ "'..."
+            b <- action
+            putStrLn $ (if b then "PASS: " else "FAIL: ") ++ name
+            return b
 
 -- test data
 arr, output :: A.Array Int Int

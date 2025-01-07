@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards, DeriveFunctor #-}
-module QCTest(tests) where
+module Main(main) where
 
 import Distribution.TestSuite
 import Test.QuickCheck
@@ -10,11 +10,33 @@ import qualified Data.Foldable as F
 import Control.Applicative
 
 import GHC.Packing
+import qualified System.Exit
+import Control.Monad (forM, unless)
 
--- use "detailed" interface: defining test instances
-tests :: IO [Test]
-tests = mapM (return . Test . uncurry (runQC 10))
+main :: IO ()
+main = do
+    putStrLn "Running all tests"
+    results <- forM mytests runTest
+    unless (and results) $ do
+        putStrLn "Some tests failed (see output above)"
+        System.Exit.exitFailure
+    where
+        runTest (name, action) = do
+            putStrLn $ "Running test '" ++ name ++ "'..."
+            b <- action
+            putStrLn $ (if b then "PASS: " else "FAIL: ") ++ name
+            return b
+
+mytests :: [(String, IO Bool)]
+mytests =
+    map
+        (fmap (runQC' 10))
         [boldTrees, foldmap square (+) 0, foldmapforce square (+) 0 ]
+    where
+        runQC' size = fmap readResult . quickCheckWithResult stdArgs{maxSize=size}
+
+        readResult Success{..} = True
+        readResult _ = False
 
 square x = x*x
 
