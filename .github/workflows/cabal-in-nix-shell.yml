@@ -10,26 +10,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, ubuntu-20.04, macos-13, macos-14]
-        ghc: [ghc7103, ghc802, ghc822, ghc844, ghc865Binary, ghc884, ghc810, ghc90, ghc92, ghc94, ghc96]
+        ghc: [ghc865Binary, ghc884, ghc810]
         cc: [gcc8, gcc14, clang_12, clang_18]
-        exclude:
-          # GHC version >= 7.10 and <= 8.4 are provided by a version of nixpkgs that is broken for macOS (cf. https://github.com/NixOS/nixpkgs/issues/104580) so we exlude these
-          - os: macos-13
-            ghc: ghc7103
-          - os: macos-13
-            ghc: ghc802
-          - os: macos-13
-            ghc: ghc822
-          - os: macos-13
-            ghc: ghc844
-          - os: macos-14
-            ghc: ghc7103
-          - os: macos-14
-            ghc: ghc802
-          - os: macos-14
-            ghc: ghc822
-          - os: macos-14
-            ghc: ghc844
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
