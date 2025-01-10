@@ -280,7 +280,7 @@ prgHash = unsafePerformIO $
 -- removed. This code here is a cheap and incomplete hack, as the
 -- package would otherwise need a configure script.
 
-#if x86_64_BUILD_ARCH
+#if x86_64_BUILD_ARCH || aarch64_BUILD_ARCH
 type TargetWord = Word64
 hexWordFmt = "0x%016x"
 #elif i386_BUILD_ARCH
