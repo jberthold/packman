@@ -59,9 +59,10 @@ jobs:
         run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'cabal build --enable-tests'
 
       - name: Run tests
+        id: run_tests
         run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'cabal test --test-show-details direct' # "--test-show-details direct" makes cabal print test suite output to terminal
 
-      # Run all tests again showing only the output of failed tests
+      # Run all tests again if the "Run tests"-step failed, showing only the output of failed tests
       - name: Run failed tests
-        if: failure()
+        if: ${{ failure() && steps.run_tests.conclusion == 'failure' }}
         run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'cabal test --test-show-details failures'
