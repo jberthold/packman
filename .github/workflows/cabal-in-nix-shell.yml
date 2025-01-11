@@ -18,6 +18,9 @@ jobs:
             ghc: ghc884
           - os: macos-14
             ghc: ghc865Binary
+          # The macOS ARM builds of GCC, as provided by nixpkgs via shell.nix, are broken for GCC < 11. So we exclude GCC 8.
+          - os: macos-14
+            cc: gcc8
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
