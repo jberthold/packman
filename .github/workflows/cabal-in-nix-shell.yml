@@ -71,10 +71,11 @@ jobs:
         #         The condition "other_test_suites_did_not_fail" is tested by asserting that no log files exist that fit the "*-test-fail.log" pattern while excluding the log file of the "testmthread" test suite (testmthread-test-fail.log).
         # TODO: Revert this change once that issue is fixed.
       - name: Run tests
+        id: run_tests
         run: |
           mkdir ci-logs
           nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run '(cabal test --test-log="$(pwd)/ci-logs/\$test-suite-test-\$result.log" || grep "testmthread: Contains an unsupported closure type (whose implementation is missing)" ci-logs/testmthread-test-fail.log) && (! find ci-logs ! -name testmthread-test-fail.log -name "*-test-fail.log"|grep .)'
 
       - name: Print output of failed tests
-        if: failure()
+        if: ${{ failure() && steps.run_tests.conclusion == 'failure' }}
         run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'tail -v -n +1 ci-logs/*-test-fail.log'
