@@ -12,6 +12,15 @@ jobs:
         os: [ubuntu-22.04, ubuntu-20.04, macos-13, macos-14]
         ghc: [ghc865Binary, ghc884, ghc810]
         cc: [gcc8, gcc14, clang_12, clang_18]
+        exclude:
+          # The macOS ARM builds of GHC, as provided by nixpkgs via shell.nix, are broken for GHC < 8.10. So we exclude them for the ARM macOS runner (macos-14).
+          - os: macos-14
+            ghc: ghc884
+          - os: macos-14
+            ghc: ghc865Binary
+          # The macOS ARM builds of GCC, as provided by nixpkgs via shell.nix, are broken for GCC < 11. So we exclude GCC 8.
+          - os: macos-14
+            cc: gcc8
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -21,12 +30,10 @@ jobs:
         uses: cachix/install-nix-action@v25
         with:
           install_url: https://releases.nixos.org/nix/nix-2.20.5/install
-          # NOTE: We avoid using arm64 builds of GHC (because they're mostly broken for early GHC versions) by specifying 'system = x86_64-darwin' for macOS runners
           extra_nix_config: |
             substituters = https://cache.nixos.org https://cache.iog.io
             trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ=
             system-features = benchmark big-parallel kvm nixos-test
-            ${{ startsWith(matrix.os, 'macos') && 'system = x86_64-darwin' || '' }}
 
       - name: Cache cabal files
         uses: actions/cache@v3
