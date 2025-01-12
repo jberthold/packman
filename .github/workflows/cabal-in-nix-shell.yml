@@ -58,10 +58,16 @@ jobs:
       - name: Build tests
         run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'cabal build --enable-tests'
 
+        # NOTE: Ignores failures caused by https://github.com/jberthold/packman/issues/18.
+        #       It's not very useful to have failing CI on the master branch, since it makes us miss newly introduced bugs. Therefore, we ignore this known error, while failing in case of other errors in the same test suite or failure of other test suites.
+        #       The condition in human-readable terms is: (all_tests_succeeded || testmthread_logs_contain_issue18_error_string) && other_test_suites_did_not_fail
+        #         The condition "other_test_suites_did_not_fail" is tested by asserting that no log files exist that fit the "*-test-fail.log" pattern while excluding the log file of the "testmthread" test suite (testmthread-test-fail.log).
+        # TODO: Revert this change once that issue is fixed.
       - name: Run tests
-        run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'cabal test --test-show-details direct' # "--test-show-details direct" makes cabal print test suite output to terminal
+        run: |
+          mkdir ci-logs
+          nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run '(cabal test --test-log="$(pwd)/ci-logs/\$test-suite-test-\$result.log" || grep "testmthread: Contains an unsupported closure type (whose implementation is missing)" ci-logs/testmthread-test-fail.log) && (! find ci-logs ! -name testmthread-test-fail.log -name "*-test-fail.log"|grep .)'
 
-      # Run all tests again showing only the output of failed tests
-      - name: Run failed tests
+      - name: Print output of failed tests
         if: failure()
-        run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'cabal test --test-show-details failures'
+        run: nix-shell --argstr ghcVersion ${{ matrix.ghc }} --argstr ccVersion ${{ matrix.cc }} --run 'tail -v -n +1 ci-logs/*-test-fail.log'

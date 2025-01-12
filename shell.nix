@@ -28,6 +28,7 @@ pkgs.mkShell {
     pkgs.cabal-install
     pkgs.git
     pkgs2405.${ccVersion}
+    pkgs.coreutils
   ];
 }
 
