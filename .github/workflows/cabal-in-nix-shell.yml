@@ -42,8 +42,8 @@ jobs:
             ~/.cabal/packages
             ~/.cabal/store
             dist-newstyle
-          key: ${{ runner.os }}-${{ matrix.os }}-${{ hashFiles('**/*.cabal', '**/cabal.project', '**/cabal.project.freeze') }}--${{ matrix.ghc }}
-          restore-keys: ${{ runner.os }}-${{ matrix.os }}-
+          key: ${{ runner.os }}-${{ matrix.os }}-${{ matrix.ghc }}-${{ matrix.cc }}-${{ hashFiles('**/*.cabal', '**/cabal.project', '**/cabal.project.freeze') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.os }}-${{ matrix.ghc }}-${{ matrix.cc }}-
 
       # Make nix-shell use specific Bash version.
       # Cf. https://nixos.org/manual/nix/stable/command-ref/nix-shell#environment-variables.
